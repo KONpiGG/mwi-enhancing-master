@@ -30,7 +30,7 @@
 
 创建环境后，可以先给 Codex 这个只读任务：
 
-> 阅读根目录 AGENTS.md，不修改代码。运行 npm run verify，并概括项目结构、当前
+> 阅读根目录 AGENTS.md 和 ROADMAP.md，不修改代码。运行 npm run verify，并概括项目结构、当前
 > MVP 边界以及建议的下一步。
 
 如果验证成功，说明仓库、依赖安装和项目指令都已被正确读取。
@@ -46,7 +46,7 @@ codex --ask-for-approval never "概括当前项目指令和验证命令"
 常用任务示例：
 
 ```text
-先阅读 AGENTS.md 和 docs/ROADMAP.md。为市场快照接入 SQLite，只实现存储层，
+先阅读 AGENTS.md 和 ROADMAP.md。为市场快照接入 SQLite，只实现存储层，
 补充迁移与测试，不要开始强化利润计算。
 ```
 

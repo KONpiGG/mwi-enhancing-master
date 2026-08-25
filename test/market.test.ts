@@ -9,21 +9,31 @@ import { SnapshotStore } from '../src/market/store.js';
 
 const fixture = JSON.parse(await readFile(new URL('./fixtures/marketplace.json', import.meta.url), 'utf8')) as unknown;
 
-test('parses compact quote fields and explicit enhancement levels', () => {
+test('parses official item and enhancement-level maps', () => {
   const snapshot = parseMarketplaceSnapshot(fixture);
   assert.equal(snapshot.timestamp, '2026-08-25T12:00:00.000Z');
-  assert.equal(snapshot.quotes.length, 3);
+  assert.equal(snapshot.quotes.length, 4);
+  assert.deepEqual(snapshot.quotes.filter(({ itemHrid }) => itemHrid === '/items/healing_book')
+    .map(({ enhancementLevel }) => enhancementLevel), [0, 3, 7]);
   assert.deepEqual(snapshot.quotes[1], {
-    itemHrid: '/items/healing_book', enhancementLevel: 1,
+    itemHrid: '/items/healing_book', enhancementLevel: 3,
     ask: 1800, bid: null, hourlyAverage: 1750, hourlyVolume: 4,
+  });
+  assert.deepEqual(snapshot.quotes[2], {
+    itemHrid: '/items/healing_book', enhancementLevel: 7,
+    ask: null, bid: 6400, hourlyAverage: null, hourlyVolume: 0,
   });
 });
 
-test('rejects malformed or unsafe market values', () => {
+test('rejects malformed timestamps, enhancement levels, and prices', () => {
   assert.throws(() => parseMarketplaceSnapshot({ timestamp: 'bad', marketData: {} }), /timestamp is invalid/);
   assert.throws(() => parseMarketplaceSnapshot({
     timestamp: 1_777_000_000,
-    marketData: { '/items/example': { a: -1, b: 2, p: 2, v: 1 } },
+    marketData: { '/items/example': { bad: { a: 1 } } },
+  }), /enhancement level/);
+  assert.throws(() => parseMarketplaceSnapshot({
+    timestamp: 1_777_000_000,
+    marketData: { '/items/example': { 0: { a: '1' } } },
   }), /non-negative/);
 });
 

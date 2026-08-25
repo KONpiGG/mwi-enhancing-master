@@ -17,6 +17,11 @@ function finiteOrNull(value: unknown, field: string): number | null {
   return value;
 }
 
+function priceOrNull(value: unknown, field: string): number | null {
+  if (value === -1) return null;
+  return finiteOrNull(value, field);
+}
+
 function parseTimestamp(value: unknown): string {
   if (typeof value !== 'string' && typeof value !== 'number') {
     throw new Error('timestamp must be an ISO string or Unix timestamp');
@@ -26,18 +31,25 @@ function parseTimestamp(value: unknown): string {
   return date.toISOString();
 }
 
-function parseQuote(itemHrid: string, value: unknown, index: number): MarketQuote {
-  const raw = record(value, `quote ${itemHrid}[${index}]`);
-  const enhancement = raw.enhancementLevel ?? raw.level ?? index;
-  if (!Number.isSafeInteger(enhancement) || (enhancement as number) < 0) {
+function parseEnhancementLevel(itemHrid: string, levelKey: string): number {
+  if (!/^(0|[1-9]\d*)$/.test(levelKey)) {
     throw new Error(`enhancement level for ${itemHrid} must be a non-negative integer`);
   }
+  const enhancementLevel = Number(levelKey);
+  if (!Number.isSafeInteger(enhancementLevel)) {
+    throw new Error(`enhancement level for ${itemHrid} must be a safe integer`);
+  }
+  return enhancementLevel;
+}
+
+function parseQuote(itemHrid: string, levelKey: string, value: unknown): MarketQuote {
+  const raw = record(value, `quote ${itemHrid}[${levelKey}]`);
   const volume = finiteOrNull(raw.v, `${itemHrid}.v`) ?? 0;
   return {
     itemHrid,
-    enhancementLevel: enhancement as number,
-    ask: finiteOrNull(raw.a, `${itemHrid}.a`),
-    bid: finiteOrNull(raw.b, `${itemHrid}.b`),
+    enhancementLevel: parseEnhancementLevel(itemHrid, levelKey),
+    ask: priceOrNull(raw.a, `${itemHrid}.a`),
+    bid: priceOrNull(raw.b, `${itemHrid}.b`),
     hourlyAverage: finiteOrNull(raw.p, `${itemHrid}.p`),
     hourlyVolume: volume,
   };
@@ -52,10 +64,10 @@ export function parseMarketplaceSnapshot(payload: unknown): MarketSnapshot {
 
   for (const [itemHrid, levels] of Object.entries(market)) {
     if (!itemHrid.startsWith('/items/')) throw new Error(`invalid item HRID: ${itemHrid}`);
-    const entries = Array.isArray(levels) ? levels : [levels];
-    entries.forEach((quote, index) => {
-      if (quote !== null) quotes.push(parseQuote(itemHrid, quote, index));
-    });
+    const levelQuotes = record(levels, `market data for ${itemHrid}`);
+    for (const [levelKey, quote] of Object.entries(levelQuotes)) {
+      quotes.push(parseQuote(itemHrid, levelKey, quote));
+    }
   }
   if (quotes.length === 0) throw new Error('market snapshot contains no quotes');
   return { timestamp, quotes };
