@@ -20,10 +20,12 @@ createServer(async (request, response) => {
     }
     if (url.pathname === '/api/rankings') {
       const level = Number(url.searchParams.get('playerLevel') ?? 0);
+      const feeRate = Number(url.searchParams.get('feeRate') ?? process.env.MWI_MARKET_FEE_RATE ?? 0);
       if (!Number.isInteger(level) || level < 0 || level > 200) return json(response, 400, { error: '强化等级必须是 0–200 的整数' });
+      if (!Number.isFinite(feeRate) || feeRate < 0 || feeRate >= 1) return json(response, 400, { error: '市场手续费率必须在 0（含）到 1（不含）之间' });
       const snapshot = await store.latest();
       if (!snapshot) return json(response, 200, { timestamp: null, rows: [], message: '还没有市场快照，请点击“更新市场数据”。' });
-      return json(response, 200, { timestamp: snapshot.timestamp, rows: calculateRankings(snapshot, enhanceableItems, level) });
+      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, rows: calculateRankings(snapshot, enhanceableItems, level, new Date(), feeRate) });
     }
     const path = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     if (!/^[\w.-]+$/.test(path)) return json(response, 404, { error: 'not found' });

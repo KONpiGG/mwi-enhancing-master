@@ -29,9 +29,9 @@ test('computes a profitable case with conservative ask/bid and material breakdow
 
 test('computes a loss and applies player skill to each explicit base chance', () => {
   const row = calculateRankings(snapshot, items, 100, new Date(snapshot.timestamp)).find(r => r.fromLevel === 1 && r.toLevel === 2)!;
-  assert.equal(row.successRate, 0.5);
-  assert.equal(row.purchaseCost, 520);
-  assert.equal(row.profit, -20);
+  assert.equal(row.successRate, 0.35);
+  assert.ok(Math.abs(row.purchaseCost - 742.8571428571429) < 1e-9);
+  assert.ok(Math.abs(row.profit + 242.8571428571429) < 1e-9);
 });
 
 test('excludes projects with either side of the required quote missing', () => {
@@ -40,4 +40,19 @@ test('excludes projects with either side of the required quote missing', () => {
   const rows = calculateRankings(broken, items, 0, new Date(snapshot.timestamp));
   assert.equal(rows.some(r => r.fromLevel === 0 && r.toLevel === 1), false);
   assert.equal(rows.some(r => r.fromLevel === 1), true, 'an ask and a different target bid are still usable');
+});
+
+test('recurses backwards so one +2 requires four +2 and eight +1 attempts', () => {
+  const row = calculateRankings(snapshot, items, 0, new Date(snapshot.timestamp)).find(r => r.fromLevel === 0 && r.toLevel === 2)!;
+  assert.deepEqual(row.steps.map(step => step.attempts), [8, 4]);
+  assert.equal(row.expectedAttempts, 8);
+});
+
+test('deducts a configurable market fee and exposes pre-tax and after-tax profit', () => {
+  const row = calculateRankings(snapshot, items, 0, new Date(snapshot.timestamp), 0.05).find(r => r.fromLevel === 0 && r.toLevel === 1)!;
+  assert.equal(row.grossSaleRevenue, 250);
+  assert.equal(row.marketFee, 12.5);
+  assert.equal(row.saleRevenue, 237.5);
+  assert.equal(row.preTaxProfit, 30);
+  assert.equal(row.profit, 17.5);
 });
