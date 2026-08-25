@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-08-25T12:00:00Z",
+  "marketData": {
+    "/items/healing_book": [
+      { "a": 1200, "b": 1100, "p": 1150, "v": 23 },
+      { "enhancementLevel": 1, "a": 1800, "b": null, "p": 1750, "v": 4 }
+    ],
+    "/items/verdant_axe": { "enhancementLevel": 3, "a": 9200, "b": 8800, "p": null, "v": 0 }
+  }
+}

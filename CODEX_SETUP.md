@@ -13,13 +13,13 @@
 4. 设置初始化脚本：
 
    ```bash
-   npm ci
+   npm install
    ```
 
 5. 可选的缓存维护脚本同样使用：
 
    ```bash
-   npm ci
+   npm install
    ```
 
 6. 当前版本不需要环境变量或 Secret。
