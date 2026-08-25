@@ -1,6 +1,6 @@
 # MWI Enhancing Master
 
-Milky Way Idle 市场采集与强化分析工具。当前版本先实现合规的**官方小时级市场采集 MVP**；它是后续历史数据库、强化计算、机会扫描、提醒和网页控制台的数据基础。
+Milky Way Idle 市场采集与强化分析工具。当前版本提供一个可运行的强化机会排行榜，保留原有官方小时市场采集和命令行查询。
 
 ## 当前能力
 
@@ -19,9 +19,12 @@ Milky Way Idle 市场采集与强化分析工具。当前版本先实现合规�
 ```bash
 npm install
 npm run verify
+npm run dev
 npm run collect
 npm run query -- /items/healing_book 1
 ```
+
+打开 <http://localhost:3000>，先点击“更新市场数据”，再设置玩家强化等级、排序和筛选条件。可用 `PORT=8080 npm run dev` 改端口。页面计算使用卖一买入、买一卖出；缺少任一必要报价的项目会被排除。点击表格行可查看逐层公式、成本和数据/公式版本。
 
 运行数据默认写入 `data/`（已被 Git 忽略）。可用 `MWI_DATA_DIR=/path/to/data` 修改位置。采集成功会明确输出 `stored`；相同官方时间戳再次采集则输出 `duplicate`。
 
@@ -36,6 +39,8 @@ data/
 
 快照内每条报价包含 `itemHrid`、`enhancementLevel`、`ask`、`bid`、`hourlyAverage` 和 `hourlyVolume`。当前磁盘存储是阶段 0 的可审计输入，不代替路线图阶段 1 的 SQLite 历史查询层。
 
-## 下一步
+## 当前限制
 
-按 [ROADMAP.md](./ROADMAP.md) 推进 SQLite 历史数据层，然后才接入带版本号的强化数据和可解释计算。网页和通知不是当前 MVP 的边界。
+- v1 游戏目录是经过人工核对的最小子集，暂只覆盖治疗之书和翠绿斧的 +1 至 +5；来源和版本见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。扩充目录不需要修改计算公式。
+- 结果是基于小时快照的期望值，不保证挂单数量足以按展示价格成交，也不包含市场手续费；成交量、价差和超过两小时的快照会显示风险。
+- 当前不包含账号、通知、Docker、部署或历史数据库。

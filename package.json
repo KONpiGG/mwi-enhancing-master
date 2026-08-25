@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "collect": "tsx src/cli.ts collect",
     "query": "tsx src/cli.ts query",
+    "dev": "tsx src/server.ts",
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify": "npm run typecheck && npm test"
