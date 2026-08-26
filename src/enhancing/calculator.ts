@@ -2,13 +2,14 @@ import { FORMULA_VERSION, GAME_DATA_VERSION, type EnhanceableItem } from '../gam
 import type { MarketSnapshot } from '../market/types.js';
 import type { EnhancingBuffs } from './preset.js';
 
+export interface MaterialPurchase { itemHrid: string; quantity: number }
 export interface StrategyStep { level: number; successRate: number; normalUpRate: number; leapUpRate: number; failureRate: number; attempts: number; protections: number; experience: number; materialCost: number }
 export interface EnhancementStrategyResult {
   protectLevel: number; protectionItemHrid: string | null; calculable: boolean; missingPrices: string[];
   expectedActions: number; expectedProtections: number; expectedTime: number; baseItemCost: number;
   materialCost: number; protectionCost: number; cashCost: number; grossRevenue: number; marketFee: number;
   netRevenue: number; expectedProfit: number; profitRate: number; totalExperience: number;
-  netTrainingCost: number; costPerExperience: number; attemptVariance: number; visits: number[]; steps: StrategyStep[];
+  netTrainingCost: number; costPerExperience: number; attemptVariance: number; visits: number[]; steps: StrategyStep[]; materialPurchases: MaterialPurchase[];
 }
 export interface ProtectionEvaluation { bestStrategy: EnhancementStrategyResult; allStrategies: EnhancementStrategyResult[] }
 export interface RankingRow {
@@ -94,10 +95,14 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   const protection = protectionCandidates.reduce<{hrid: string; price: number} | null>((best, x) => !best || x.price < best.price ? x : best, null);
   const expectedProtections = rates.reduce((sum, r) => sum + visits[r.level]! * r.failure * (r.level >= protectLevel ? 1 : 0), 0);
   if (expectedProtections !== 0 && !protection) missing.add('protection-item:ask');
-  const baseItemCost = ask(item.itemHrid, origin); let materialCost = 0; let totalExperience = 0;
+  const baseItemCost = ask(item.itemHrid, origin); let materialCost = 0; let totalExperience = 0; const materialQuantities = new Map<string, number>();
   const steps = rates.map(r => {
     const attempts = visits[r.level]!; let cost = 0;
-    for (const material of item.steps[r.level]!.materials) cost += attempts * material.quantity * ask(material.itemHrid);
+    for (const material of item.steps[r.level]!.materials) {
+      const quantity = attempts * material.quantity;
+      cost += quantity * ask(material.itemHrid);
+      materialQuantities.set(material.itemHrid, (materialQuantities.get(material.itemHrid) ?? 0) + quantity);
+    }
     const experience = attempts * (r.success + .1 * r.failure) * (1.4 * (r.level + 1) * (10 + (item.itemLevel ?? 0))) * (1 + buffs.experience);
     materialCost += cost; totalExperience += experience;
     return { level: r.level, successRate: r.success, normalUpRate: r.normalUp, leapUpRate: r.leapUp, failureRate: r.failure, attempts, protections: attempts * r.failure * (r.level >= protectLevel ? 1 : 0), experience, materialCost: cost };
@@ -107,7 +112,7 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   const grossRevenue = bid(item.itemHrid, targetLevel); const marketFee = grossRevenue * (input.marketFeeRate ?? .05);
   const cashCost = baseItemCost + materialCost + actualProtectionCost; const netRevenue = grossRevenue - marketFee;
   const expectedProfit = netRevenue - cashCost; const expectedActions = visits.reduce((a, b) => a + b, 0); const calculable = missing.size === 0 && [cashCost, grossRevenue].every(Number.isFinite);
-  return { protectLevel, protectionItemHrid: expectedProtections ? protection?.hrid ?? null : null, calculable, missingPrices: [...missing], expectedActions, expectedProtections,
+  return { protectLevel, protectionItemHrid: expectedProtections ? protection?.hrid ?? null : null, calculable, missingPrices: [...missing], expectedActions, expectedProtections, materialPurchases: [...materialQuantities].map(([itemHrid, quantity]) => ({ itemHrid, quantity })),
     expectedTime: expectedActions * (input.actionSeconds ?? 0) / (1 + buffs.speed + Math.max(0, buffs.playerLevel - (item.itemLevel ?? 0)) * .01), baseItemCost, materialCost, protectionCost: actualProtectionCost, cashCost,
     grossRevenue, marketFee, netRevenue, expectedProfit, profitRate: expectedProfit / cashCost, totalExperience, netTrainingCost: cashCost - netRevenue,
     costPerExperience: (cashCost - netRevenue) / totalExperience, visits, steps, attemptVariance: absorptionTimeVariance(q, origin) };

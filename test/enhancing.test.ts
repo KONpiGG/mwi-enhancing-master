@@ -43,6 +43,7 @@ test('each enhancing level above item recommendation grants one percent action s
 test('uses material ask, product bid, fee, and rejects missing prices', () => {
   const r = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 1, protectLevel: 1, buffs, marketFeeRate: .05 });
   assert.equal(r.grossRevenue, 230); assert.equal(r.marketFee, 11.5); assert.equal(r.materialCost, r.visits[0]! * 10);
+  assert.deepEqual(r.materialPurchases, [{ itemHrid: '/items/dust', quantity: r.visits[0]! * 2 }]);
   const broken = structuredClone(snapshot); broken.quotes.find(q => q.itemHrid === '/items/dust')!.ask = null;
   assert.equal(evaluateProtectionStrategies({ snapshot: broken, item, targetLevel: 1, buffs }), null);
 });
