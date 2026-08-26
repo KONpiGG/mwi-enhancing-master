@@ -12,6 +12,8 @@ const port = Number(process.env.PORT ?? 3000);
 const store = new SnapshotStore(process.env.MWI_DATA_DIR ?? 'data');
 const publicDir = join(import.meta.dirname, 'web');
 const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+const WEB_PROJECT_LIMIT = 250;
+const rankingCache = new Map<string, ReturnType<typeof calculateRankings>>();
 
 createServer(async (request, response) => {
   try {
@@ -50,9 +52,16 @@ createServer(async (request, response) => {
       if (Object.values(profile).some(value => !Number.isFinite(value))) return json(response, 400, { error: '玩家加成必须是有效数字' });
       const names = new Map(enhanceableItems.map(item => [item.itemHrid, item.name]));
       const marketItems = snapshot.quotes.map(quote => ({ ...quote, itemName: names.get(quote.itemHrid) ?? quote.itemHrid.split('/').at(-1)!.replaceAll('_', ' ') }));
+      const cacheKey = `${snapshot.timestamp}:${level}:${hourlyRate}:${url.searchParams}`;
+      let rows = rankingCache.get(cacheKey);
+      if (!rows) {
+        rows = calculateRankings(snapshot, enhanceableItems, profile, new Date(), feeRate, hourlyRate, 12, WEB_PROJECT_LIMIT);
+        rankingCache.set(cacheKey, rows);
+        if (rankingCache.size > 20) rankingCache.delete(rankingCache.keys().next().value!);
+      }
       return json(response, 200, { timestamp: snapshot.timestamp, feeRate, profile, presetOptions, catalogSize: enhanceableItems.length, catalogItems, quoteCount: snapshot.quotes.length,
         marketItemCount: new Set(snapshot.quotes.map(quote => quote.itemHrid)).size, marketItems,
-        rows: calculateRankings(snapshot, enhanceableItems, profile, new Date(), feeRate, hourlyRate) });
+        projectLimit: WEB_PROJECT_LIMIT, rows });
     }
     const path = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     if (!/^[\w.-]+$/.test(path)) return json(response, 404, { error: 'not found' });
