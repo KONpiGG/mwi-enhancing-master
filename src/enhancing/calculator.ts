@@ -28,7 +28,7 @@ const clamp = (n: number) => Math.max(0, Math.min(1, n));
 // Risk is secondary metadata, while expected profit/experience is solved exactly.
 // Keeping this bounded makes it possible to evaluate the entire quoted market
 // instead of spending most of the request on Monte Carlo samples.
-const RISK_SIMULATION_RUNS = 100;
+const matrixCache = new Map<string, { visitsByOrigin: number[][]; varianceByOrigin: number[] }>();
 const quoteIndexes = new WeakMap<MarketSnapshot, Map<string, MarketSnapshot['quotes'][number]>>();
 
 function quoteIndex(snapshot: MarketSnapshot) {
@@ -60,29 +60,40 @@ export function buildEnhancementTransitions(item: EnhanceableItem, buffs: Enhanc
   return { q, rates };
 }
 
-function solveVisits(q: number[][], origin: number): number[] {
-  const n = q.length;
-  const a = Array.from({ length: n }, (_, row) => [...Array.from({ length: n }, (_, col) => (row === col ? 1 : 0) - q[col]![row]!), row === origin ? 1 : 0]);
+function solveLinear(matrix: number[][], rightSides: number[][]): number[][] {
+  const n = matrix.length;
+  const a = matrix.map((row, i) => [...row, ...rightSides[i]!]);
   for (let col = 0; col < n; col++) {
-    let pivot = col; for (let row = col + 1; row < n; row++) if (Math.abs(a[row]![col]!) > Math.abs(a[pivot]![col]!)) pivot = row;
+    let pivot = col;
+    for (let row = col + 1; row < n; row++) if (Math.abs(a[row]![col]!) > Math.abs(a[pivot]![col]!)) pivot = row;
     [a[col], a[pivot]] = [a[pivot]!, a[col]!];
-    const divisor = a[col]![col]!; if (Math.abs(divisor) < 1e-14) throw new Error('enhancement transition matrix is singular');
-    for (let j = col; j <= n; j++) a[col]![j]! /= divisor;
-    for (let row = 0; row < n; row++) if (row !== col) { const factor = a[row]![col]!; for (let j = col; j <= n; j++) a[row]![j]! -= factor * a[col]![j]!; }
+    const divisor = a[col]![col]!;
+    if (Math.abs(divisor) < 1e-14) throw new Error('enhancement transition matrix is singular');
+    for (let j = col; j < a[col]!.length; j++) a[col]![j]! /= divisor;
+    for (let row = 0; row < n; row++) if (row !== col) {
+      const factor = a[row]![col]!;
+      for (let j = col; j < a[row]!.length; j++) a[row]![j]! -= factor * a[col]![j]!;
+    }
   }
-  return a.map(row => row[n]!);
+  return a.map(row => row.slice(n));
 }
 
-function absorptionTimeVariance(q: number[][], origin: number): number {
+/** Solve the fundamental matrix once; every row supplies one starting level. */
+function solveAllOrigins(q: number[][], cacheKey: string) {
+  const cached = matrixCache.get(cacheKey);
+  if (cached) return cached;
   const n = q.length;
-  const solve = (right: number[]) => {
-    const a = Array.from({length:n}, (_,i) => [...Array.from({length:n},(_,j)=>(i===j?1:0)-q[i]![j]!), right[i]!]);
-    for (let col=0; col<n; col++) { let pivot=col; for(let row=col+1;row<n;row++) if(Math.abs(a[row]![col]!)>Math.abs(a[pivot]![col]!)) pivot=row; [a[col],a[pivot]]=[a[pivot]!,a[col]!]; const d=a[col]![col]!; for(let j=col;j<=n;j++) a[col]![j]!/=d; for(let row=0;row<n;row++) if(row!==col){const f=a[row]![col]!;for(let j=col;j<=n;j++)a[row]![j]!-=f*a[col]![j]!;} }
-    return a.map(row=>row[n]!);
-  };
-  const mean=solve(Array(n).fill(1));
-  const second=solve(mean.map((_,i)=>1+2*q[i]!.reduce((sum,p,j)=>sum+p*mean[j]!,0)));
-  return Math.max(0, second[origin]!-mean[origin]!**2);
+  const inverse = solveLinear(
+    Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0) - q[i]![j]!)),
+    Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => i === j ? 1 : 0)),
+  );
+  const means = inverse.map(row => row.reduce((sum, value) => sum + value, 0));
+  const secondRight = q.map((row, i) => [1 + 2 * row.reduce((sum, probability, j) => sum + probability * means[j]!, 0)]);
+  const seconds = solveLinear(Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0) - q[i]![j]!)), secondRight);
+  const result = { visitsByOrigin: inverse, varianceByOrigin: seconds.map((row, i) => Math.max(0, row[0]! - means[i]! ** 2)) };
+  matrixCache.set(cacheKey, result);
+  if (matrixCache.size > 2_000) matrixCache.delete(matrixCache.keys().next().value!);
+  return result;
 }
 
 export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementStrategyResult {
@@ -90,7 +101,9 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   if (origin < 0 || origin >= targetLevel) throw new RangeError('origin level must be below target');
   const buffs = input.buffs ?? { playerLevel: 0, success: 0, blessed: 0, experience: 0, speed: 0 };
   const { q, rates } = buildEnhancementTransitions(item, buffs, targetLevel, protectLevel);
-  const visits = solveVisits(q, origin); const quotes = quoteIndex(snapshot);
+  const matrixKey = `${item.itemLevel ?? 0}:${targetLevel}:${protectLevel}:${buffs.playerLevel}:${buffs.success}:${buffs.blessed}:${item.steps.slice(0, targetLevel).map(step => step.baseSuccessRate).join(',')}`;
+  const solved = solveAllOrigins(q, matrixKey);
+  const visits = solved.visitsByOrigin[origin]!; const quotes = quoteIndex(snapshot);
   const missing = new Set<string>(); const ask = (hrid: string, level = 0) => { if (hrid === '/items/coin') return 1; const value = quotes.get(key(hrid, level))?.ask; if (value == null) missing.add(`${hrid}@+${level}:ask`); return value ?? NaN; };
   const bid = (hrid: string, level = 0) => { const value = quotes.get(key(hrid, level))?.bid; if (value == null) missing.add(`${hrid}@+${level}:bid`); return value ?? NaN; };
   const protectionHrids = [...(item.protectionItemHrids ?? [item.itemHrid]), '/items/mirror_of_protection'];
@@ -118,7 +131,7 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   return { protectLevel, protectionItemHrid: expectedProtections ? protection?.hrid ?? null : null, calculable, missingPrices: [...missing], expectedActions, expectedProtections, materialPurchases: [...materialQuantities].map(([itemHrid, quantity]) => ({ itemHrid, quantity })),
     expectedTime: expectedActions * (input.actionSeconds ?? 0) / (1 + buffs.speed + Math.max(0, buffs.playerLevel - (item.itemLevel ?? 0)) * .01), baseItemCost, materialCost, protectionCost: actualProtectionCost, cashCost,
     grossRevenue, marketFee, netRevenue, expectedProfit, profitRate: expectedProfit / cashCost, totalExperience, netTrainingCost: cashCost - netRevenue,
-    costPerExperience: (cashCost - netRevenue) / totalExperience, visits, steps, attemptVariance: absorptionTimeVariance(q, origin) };
+    costPerExperience: (cashCost - netRevenue) / totalExperience, visits, steps, attemptVariance: solved.varianceByOrigin[origin]! };
 }
 
 export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protectLevel'>): ProtectionEvaluation | null {
@@ -146,36 +159,73 @@ export function calculateRankings(snapshot: MarketSnapshot, items: readonly Enha
     if (volume < 5) risks.push('低成交量'); if (spread > .2) risks.push('买卖价差较大'); if ((now.valueOf() - new Date(snapshot.timestamp).valueOf()) / 36e5 > 2) risks.push('市场数据陈旧');
     const totalCost = b.cashCost + b.marketFee;
     const profit = b.grossRevenue - totalCost;
-    const simulation = simulateRisk(b, originLevel, targetLevel, buy.ask!, b.grossRevenue, b.marketFee, RISK_SIMULATION_RUNS, hash(`${item.itemHrid}:${originLevel}:${targetLevel}`));
-    const downsideLossRate = totalCost > 0 ? Math.min(1, Math.max(0, -simulation.p10) / totalCost) : 0;
-    const riskScore = 100 * (simulation.lossProbability * .6 + downsideLossRate * .4);
+    // Phase one deliberately uses only exact moments. Monte Carlo is an optional,
+    // asynchronous refinement and never delays the full ranking.
+    const actionDeviation = Math.sqrt(b.attemptVariance);
+    const coefficientOfVariation = b.expectedActions > 0 ? actionDeviation / b.expectedActions : 0;
+    const profitDeviation = (b.materialCost + b.protectionCost) * coefficientOfVariation;
+    const p10 = profit - 1.281551565545 * profitDeviation;
+    const p90 = profit + 1.281551565545 * profitDeviation;
+    const lossProbability = profitDeviation > 0 ? normalCdf(-profit / profitDeviation) : profit < 0 ? 1 : 0;
+    const downsideLossRate = totalCost > 0 ? Math.min(1, Math.max(0, -p10) / totalCost) : 0;
+    const riskScore = 100 * (lossProbability * .6 + downsideLossRate * .4);
     rows.push({ id: `${item.itemHrid}:${originLevel}:${targetLevel}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: originLevel, toLevel: targetLevel, bestStrategy: b, allStrategies: evaluation.allStrategies,
       expectedAttempts: b.expectedActions, expectedProtections: b.expectedProtections, totalExperience: b.totalExperience, purchaseCost: b.baseItemCost, materialCost: b.materialCost, protectionCost: b.protectionCost,
       capitalRequired: b.cashCost, grossSaleRevenue: b.grossRevenue, marketFee: b.marketFee, saleRevenue: b.netRevenue, totalCost, profit, profitRate: totalCost > 0 ? profit/totalCost : NaN,
       expectedTime:b.expectedTime, experiencePerHour:b.expectedTime > 0 ? b.totalExperience*3600/b.expectedTime : null, experiencePerGold:totalCost > 0 ? b.totalExperience/totalCost : null, experienceEfficiency:null, hourlyProfit:b.expectedTime > 0 ? profit*3600/b.expectedTime : null, attemptVariance:b.attemptVariance,
       netTrainingCost: b.netTrainingCost, costPerExperience: b.costPerExperience, recent72hVolume:null, volume, spread, snapshotTimestamp: snapshot.timestamp, formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks,
-      lossProbability:simulation.lossProbability, profitP10:simulation.p10, profitP50:simulation.p50, profitP90:simulation.p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:RISK_SIMULATION_RUNS });
+      lossProbability, profitP10:p10, profitP50:profit, profitP90:p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:0 });
   }
   applyExperienceEfficiency(rows);
   return rows;
 }
 
-function hash(value: string): number { let h=2166136261; for (const c of value) { h^=c.charCodeAt(0); h=Math.imul(h,16777619); } return h>>>0; }
-function random(seed: number) { let state=seed||1; return () => { state=(state+0x6D2B79F5)|0; let t=Math.imul(state^(state>>>15),1|state); t^=t+Math.imul(t^(t>>>7),61|t); return ((t^(t>>>14))>>>0)/4294967296; }; }
-function quantile(sorted: number[], p: number) { return sorted[Math.floor((sorted.length-1)*p)]!; }
-function simulateRisk(strategy: EnhancementStrategyResult, origin: number, target: number, baseCost: number, revenue: number, fee: number, runs: number, seed: number) {
-  const rng=random(seed), profits:number[]=[]; let losses=0;
-  for(let run=0;run<runs;run++) { let level=origin,cost=baseCost+fee; while(level<target) { const step=strategy.steps[level]!; const attemptCost=step.materialCost/step.attempts;
-      // A failure at +0 returns to +0. Sampling that geometric run in one go is
-      // exact, and prevents low-success items from doing millions of identical
-      // loop iterations (and previously aborting the whole market response).
-      if(level===0 && step.failureRate>0) { const failures=Math.floor(Math.log1p(-rng())/Math.log(step.failureRate)); cost+=(failures+1)*attemptCost; const successfulRoll=rng()*step.successRate; level+=successfulRoll<step.normalUpRate?1:2; continue; }
-      cost+=attemptCost; const roll=rng(); if(roll<step.normalUpRate) level++; else if(roll<step.normalUpRate+step.leapUpRate) level+=2; else { if(level>=strategy.protectLevel) { cost+=strategy.protectionCost/strategy.expectedProtections; level--; } else level=0; } } const profit=revenue-cost; profits.push(profit); if(profit<0)losses++; }
-  profits.sort((a,b)=>a-b); return {lossProbability:losses/runs,p10:quantile(profits,.1),p50:quantile(profits,.5),p90:quantile(profits,.9)};
+function normalCdf(value: number) {
+  const sign = value < 0 ? -1 : 1; const x = Math.abs(value) / Math.sqrt(2);
+  const t = 1 / (1 + .3275911 * x);
+  const erf = sign * (1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x));
+  return (1 + erf) / 2;
 }
+
+/** Optional phase-two refinement for a shortlisted or explicitly opened row. */
+export function simulateRankingRisk(row: RankingRow, runs = 1_000): Pick<RankingRow, 'lossProbability' | 'profitP10' | 'profitP50' | 'profitP90' | 'downsideLossRate' | 'riskScore' | 'riskLevel' | 'simulationRuns'> {
+  const rng = random(hash(row.id)); const profits: number[] = []; let losses = 0;
+  for (let run = 0; run < runs; run++) {
+    let level = row.fromLevel; let cost = row.purchaseCost + row.marketFee;
+    while (level < row.toLevel) {
+      const step = row.bestStrategy.steps[level]!; const attemptCost = step.materialCost / step.attempts;
+      if (level === 0 && step.failureRate > 0) {
+        const failures = Math.floor(Math.log1p(-rng()) / Math.log(step.failureRate));
+        cost += (failures + 1) * attemptCost;
+        level += rng() * step.successRate < step.normalUpRate ? 1 : 2; continue;
+      }
+      cost += attemptCost; const roll = rng();
+      if (roll < step.normalUpRate) level++; else if (roll < step.normalUpRate + step.leapUpRate) level += 2;
+      else if (level >= row.bestStrategy.protectLevel) { cost += row.protectionCost / row.expectedProtections; level--; } else level = 0;
+    }
+    const profit = row.grossSaleRevenue - cost; profits.push(profit); if (profit < 0) losses++;
+  }
+  profits.sort((a, b) => a - b); const at = (p: number) => profits[Math.floor((runs - 1) * p)]!;
+  const lossProbability = losses / runs, p10 = at(.1), downsideLossRate = row.totalCost > 0 ? Math.min(1, Math.max(0, -p10) / row.totalCost) : 0;
+  const riskScore = 100 * (lossProbability * .6 + downsideLossRate * .4);
+  return { lossProbability, profitP10: p10, profitP50: at(.5), profitP90: at(.9), downsideLossRate, riskScore, riskLevel: riskLevel(riskScore), simulationRuns: runs };
+}
+
+function hash(value: string): number { let h = 2166136261; for (const c of value) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function random(seed: number) { let state = seed || 1; return () => { state = (state + 0x6D2B79F5) | 0; let t = Math.imul(state ^ (state >>> 15), 1 | state); t ^= t + Math.imul(t ^ (t >>> 7), 61 | t); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
 function riskLevel(score:number) { return score<=20?'很低':score<=40?'低':score<=60?'中':score<=80?'高':'很高'; }
 function percentileRanks(values:number[]) { const sorted=[...values].sort((a,b)=>a-b), ranks=new Map<number,number>(); for(let start=0;start<sorted.length;) { let end=start+1; while(end<sorted.length&&sorted[end]===sorted[start])end++; ranks.set(sorted[start]!,sorted.length===1?1:((start+end-1)/2)/(sorted.length-1)); start=end; } return ranks; }
 function applyExperienceEfficiency(rows:RankingRow[]) { const time=rows.flatMap(r=>r.experiencePerHour==null?[]:[r.experiencePerHour]), gold=rows.flatMap(r=>r.experiencePerGold==null?[]:[r.experiencePerGold]), timeRanks=percentileRanks(time), goldRanks=percentileRanks(gold); for(const r of rows) if(r.experiencePerHour!=null&&r.experiencePerGold!=null) r.experienceEfficiency=100*Math.sqrt(timeRanks.get(r.experiencePerHour)!*goldRanks.get(r.experiencePerGold)!); }
 
 export const rankProfitProjects = (rows: readonly RankingRow[]) => rows.filter(r => r.profit > 0).sort((a, b) => b.profit - a.profit);
 export const rankTrainingProjects = (rows: readonly RankingRow[]) => [...rows].sort((a, b) => a.costPerExperience - b.costPerExperience);
+
+export interface RankingBatch { rows: RankingRow[]; candidateCount: number; successCount: number; excludedMissingPriceCount: number; exactCalculationMs: number; riskCalculationMs: number }
+
+export function calculateRankingBatch(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12): RankingBatch {
+  const started = performance.now();
+  const candidateCount = items.reduce((sum, item) => sum + item.steps.length * (item.steps.length + 1) / 2, 0);
+  const rows = calculateRankings(snapshot, items, buffs, now, marketFeeRate, hourlyRate, actionSeconds);
+  return { rows, candidateCount, successCount: rows.length, excludedMissingPriceCount: candidateCount - rows.length, exactCalculationMs: performance.now() - started, riskCalculationMs: 0 };
+}
