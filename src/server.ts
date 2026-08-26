@@ -2,6 +2,8 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { calculateRankings } from './enhancing/calculator.js';
+import { presetGameData, presetOptions } from './enhancing/game-preset-data.js';
+import { createPreset, deriveEnhancingBuffs } from './enhancing/preset.js';
 import { enhanceableItems } from './game-data/catalog.js';
 import { collectSnapshot } from './market/collect.js';
 import { SnapshotStore } from './market/store.js';
@@ -25,15 +27,18 @@ createServer(async (request, response) => {
       if (!Number.isFinite(feeRate) || feeRate < 0 || feeRate >= 1) return json(response, 400, { error: '市场手续费率必须在 0（含）到 1（不含）之间' });
       const snapshot = await store.latest();
       const catalogItems = enhanceableItems.map(({ itemHrid, name }) => ({ itemHrid, itemName: name }));
-      if (!snapshot) return json(response, 200, { timestamp: null, rows: [], marketItems: [], catalogItems, message: '还没有市场快照，请点击“更新市场数据”。' });
-      const percent = (name: string) => Number(url.searchParams.get(name) ?? 0) / 100;
-      const profile = { playerLevel: level + Number(url.searchParams.get('levelBonus') ?? 0),
-        success: percent('equipmentSuccess') + percent('communitySuccess') + percent('achievementSuccess') + percent('shrineSuccess'),
-        blessed: 0, experience: percent('experienceBonus'), speed: 0 };
+      if (!snapshot) return json(response, 200, { timestamp: null, rows: [], marketItems: [], catalogItems, presetOptions, message: '还没有市场快照，请点击“更新市场数据”。' });
+      const preset = createPreset(); preset.enhancing.playerLevel = level;
+      const equipment = JSON.parse(url.searchParams.get('equipment') ?? '{}') as Record<string, {hrid?: string; enhanceLevel?: number}>;
+      preset.enhancing.tool = equipment.tool ?? {}; preset.enhancing.charm = equipment.charm ?? {};
+      for (const slot of ['hands','body','legs','back','neck'] as const) preset.specialEquipment[slot] = equipment[slot] ?? {};
+      preset.enhancing.teas = (url.searchParams.get('teas') ?? '').split(',').filter(Boolean);
+      const teaLevel = preset.enhancing.teas.includes('/items/ultra_enhancing_tea') ? 8 : preset.enhancing.teas.includes('/items/super_enhancing_tea') ? 6 : preset.enhancing.teas.includes('/items/enhancing_tea') ? 3 : 0;
+      const profile = deriveEnhancingBuffs(preset, presetGameData); profile.playerLevel += teaLevel;
       if (Object.values(profile).some(value => !Number.isFinite(value))) return json(response, 400, { error: '玩家加成必须是有效数字' });
       const names = new Map(enhanceableItems.map(item => [item.itemHrid, item.name]));
       const marketItems = snapshot.quotes.map(quote => ({ ...quote, itemName: names.get(quote.itemHrid) ?? quote.itemHrid.split('/').at(-1)!.replaceAll('_', ' ') }));
-      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, catalogSize: enhanceableItems.length, catalogItems, quoteCount: snapshot.quotes.length,
+      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, profile, presetOptions, catalogSize: enhanceableItems.length, catalogItems, quoteCount: snapshot.quotes.length,
         marketItemCount: new Set(snapshot.quotes.map(quote => quote.itemHrid)).size, marketItems,
         rows: calculateRankings(snapshot, enhanceableItems, profile, new Date(), feeRate) });
     }

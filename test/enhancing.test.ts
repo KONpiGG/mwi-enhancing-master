@@ -35,6 +35,10 @@ test('experience includes 10% failure experience then the experience buff', () =
   const r = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 1, protectLevel: 1, buffs: { ...buffs, experience: .5 } });
   assert.ok(Math.abs(r.totalExperience - r.visits[0]! * (.5 + .1 * .5) * 1.4 * 20 * 1.5) < 1e-10);
 });
+test('each enhancing level above item recommendation grants one percent action speed', () => {
+  const r = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 1, protectLevel: 1, actionSeconds: 10, buffs: { ...buffs, playerLevel: 15 } });
+  assert.ok(Math.abs(r.expectedTime - r.expectedActions * 10 / 1.05) < 1e-10);
+});
 test('uses material ask, product bid, fee, and rejects missing prices', () => {
   const r = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 1, protectLevel: 1, buffs, marketFeeRate: .05 });
   assert.equal(r.grossRevenue, 230); assert.equal(r.marketFee, 11.5); assert.equal(r.materialCost, r.visits[0]! * 10);
@@ -42,9 +46,13 @@ test('uses material ask, product bid, fee, and rejects missing prices', () => {
   assert.equal(evaluateProtectionStrategies({ snapshot: broken, item, targetLevel: 1, buffs }), null);
 });
 test('preset equipment levels and every source derive only declared attributes', () => {
-  const preset: EnhancingPreset = { id: 'p', name: 'p', enhancing: { playerLevel: 50, tool: { hrid: 'tool', enhanceLevel: 1 }, charm: {}, teas: ['tea'] }, specialEquipment: { hands: {}, neck: {}, earrings: {}, ring: {}, pouch: {} }, seals: ['seal'], communityBuffs: { c: { hrid: 'community', level: 2 } }, achievementBuffs: { achievement: { enabled: true } }, shrines: { shrine: { level: 3 } } };
+  const preset: EnhancingPreset = { id: 'p', name: 'p', enhancing: { playerLevel: 50, tool: { hrid: 'tool', enhanceLevel: 1 }, charm: {}, teas: ['tea'] }, specialEquipment: { hands: {}, body: {}, legs: {}, back: {}, neck: {}, earrings: {}, ring: {}, pouch: {} }, seals: ['seal'], communityBuffs: { c: { hrid: 'community', level: 2 } }, achievementBuffs: { achievement: { enabled: true } }, shrines: { shrine: { level: 3 } } };
   const data: PresetGameData = { equipment: { tool: [{ attribute: 'Success', value: .1 }] }, consumables: { tea: [{ attribute: 'Speed', value: .1 }] }, seals: { seal: [{ attribute: 'Blessed', value: .01 }] }, communityBuffs: { community: [{ attribute: 'Success', value: .02 }] }, achievements: { achievement: [{ attribute: 'Experience', value: .2 }] }, shrines: { shrine: [{ attribute: 'Experience', value: .01 }] }, enhancementLevelTotalBonusMultiplierTable: [1, 2] };
-  const result = deriveEnhancingBuffs(preset, data); assert.ok(Math.abs(result.success - .24) < 1e-12); assert.deepEqual({ ...result, success: .24 }, { playerLevel: 50, success: .24, blessed: .01, experience: .23, speed: .1 });
+  const result = deriveEnhancingBuffs(preset, data); assert.ok(Math.abs(result.success - .14) < 1e-12); assert.deepEqual({ ...result, success: .14 }, { playerLevel: 50, success: .14, blessed: .01, experience: .23, speed: .1 });
+});
+test('rankings enumerate every quoted origin and target pair', () => {
+  const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp));
+  assert.equal(rows.length, 28); assert.ok(rows.some(row => row.fromLevel === 3 && row.toLevel === 5)); assert.ok(rows.some(row => row.fromLevel === 4 && row.toLevel === 7));
 });
 test('profit and training rankings reuse the identical best strategy objects', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp)); const profit = rankProfitProjects(rows); const training = rankTrainingProjects(rows);

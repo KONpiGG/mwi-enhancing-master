@@ -83,7 +83,7 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   const cashCost = baseItemCost + materialCost + actualProtectionCost; const netRevenue = grossRevenue - marketFee;
   const expectedProfit = netRevenue - cashCost; const expectedActions = visits.reduce((a, b) => a + b, 0); const calculable = missing.size === 0 && [cashCost, grossRevenue].every(Number.isFinite);
   return { protectLevel, protectionItemHrid: expectedProtections ? protection?.hrid ?? null : null, calculable, missingPrices: [...missing], expectedActions, expectedProtections,
-    expectedTime: expectedActions * (input.actionSeconds ?? 0) / (1 + buffs.speed), baseItemCost, materialCost, protectionCost: actualProtectionCost, cashCost,
+    expectedTime: expectedActions * (input.actionSeconds ?? 0) / (1 + buffs.speed + Math.max(0, buffs.playerLevel - (item.itemLevel ?? 0)) * .01), baseItemCost, materialCost, protectionCost: actualProtectionCost, cashCost,
     grossRevenue, marketFee, netRevenue, expectedProfit, profitRate: expectedProfit / cashCost, totalExperience, netTrainingCost: cashCost - netRevenue,
     costPerExperience: (cashCost - netRevenue) / totalExperience, visits, steps };
 }
@@ -97,12 +97,13 @@ export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protect
 /** Shared project set; profit and training views only sort/filter these rows differently. */
 export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05): RankingRow[] {
   const resolved = typeof buffs === 'number' ? { playerLevel: buffs, success: 0, blessed: 0, experience: 0, speed: 0 } : buffs; const rows: RankingRow[] = [];
-  for (const item of items) for (let targetLevel = 1; targetLevel <= item.steps.length; targetLevel++) {
-    const evaluation = evaluateProtectionStrategies({ snapshot, item, targetLevel, buffs: resolved, marketFeeRate }); if (!evaluation) continue;
-    const b = evaluation.bestStrategy; const buy = snapshot.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === 0)!; const sell = snapshot.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === targetLevel)!;
+  for (const item of items) for (let originLevel = 0; originLevel < item.steps.length; originLevel++) for (let targetLevel = originLevel + 1; targetLevel <= item.steps.length; targetLevel++) {
+    const buy = snapshot.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === originLevel); const sell = snapshot.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === targetLevel); if (buy?.ask == null || sell?.bid == null) continue;
+    const evaluation = evaluateProtectionStrategies({ snapshot, item, originLevel, targetLevel, buffs: resolved, marketFeeRate }); if (!evaluation) continue;
+    const b = evaluation.bestStrategy;
     const midpoint = (buy.ask! + (buy.bid ?? buy.ask!)) / 2; const spread = midpoint ? (buy.ask! - (buy.bid ?? buy.ask!)) / midpoint : 0; const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume); const risks: string[] = [];
     if (volume < 5) risks.push('低成交量'); if (spread > .2) risks.push('买卖价差较大'); if ((now.valueOf() - new Date(snapshot.timestamp).valueOf()) / 36e5 > 2) risks.push('市场数据陈旧');
-    rows.push({ id: `${item.itemHrid}:0:${targetLevel}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: 0, toLevel: targetLevel, bestStrategy: b, allStrategies: evaluation.allStrategies,
+    rows.push({ id: `${item.itemHrid}:${originLevel}:${targetLevel}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: originLevel, toLevel: targetLevel, bestStrategy: b, allStrategies: evaluation.allStrategies,
       expectedAttempts: b.expectedActions, expectedProtections: b.expectedProtections, totalExperience: b.totalExperience, purchaseCost: b.baseItemCost, materialCost: b.materialCost, protectionCost: b.protectionCost,
       capitalRequired: b.cashCost, grossSaleRevenue: b.grossRevenue, marketFee: b.marketFee, saleRevenue: b.netRevenue, profit: b.expectedProfit, profitRate: b.profitRate,
       netTrainingCost: b.netTrainingCost, costPerExperience: b.costPerExperience, volume, spread, snapshotTimestamp: snapshot.timestamp, formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks });
