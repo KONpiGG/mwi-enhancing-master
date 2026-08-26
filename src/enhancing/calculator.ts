@@ -1,101 +1,114 @@
 import { FORMULA_VERSION, GAME_DATA_VERSION, type EnhanceableItem } from '../game-data/catalog.js';
-import type { MarketQuote, MarketSnapshot } from '../market/types.js';
+import type { MarketSnapshot } from '../market/types.js';
+import type { EnhancingBuffs } from './preset.js';
 
+export interface StrategyStep { level: number; successRate: number; normalUpRate: number; leapUpRate: number; failureRate: number; attempts: number; protections: number; experience: number; materialCost: number }
+export interface EnhancementStrategyResult {
+  protectLevel: number; protectionItemHrid: string | null; calculable: boolean; missingPrices: string[];
+  expectedActions: number; expectedProtections: number; expectedTime: number; baseItemCost: number;
+  materialCost: number; protectionCost: number; cashCost: number; grossRevenue: number; marketFee: number;
+  netRevenue: number; expectedProfit: number; profitRate: number; totalExperience: number;
+  netTrainingCost: number; costPerExperience: number; visits: number[]; steps: StrategyStep[];
+}
+export interface ProtectionEvaluation { bestStrategy: EnhancementStrategyResult; allStrategies: EnhancementStrategyResult[] }
 export interface RankingRow {
-  id: string; itemHrid: string; itemName: string; fromLevel: number; toLevel: number;
-  successRate: number; expectedAttempts: number; totalExperience: number;
-  purchaseCost: number; materialCost: number; saleRevenue: number; profit: number;
-  grossSaleRevenue: number; marketFee: number; preTaxProfit: number;
-  costPerExperience: number; capitalRequired: number; volume: number; spread: number;
-  snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
-  steps: Array<{ toLevel: number; successRate: number; attempts: number; experience: number; inputCost: number; materialCost: number }>;
+  id: string; itemHrid: string; itemName: string; fromLevel: number; toLevel: number; bestStrategy: EnhancementStrategyResult;
+  allStrategies: EnhancementStrategyResult[]; expectedAttempts: number; expectedProtections: number; totalExperience: number;
+  purchaseCost: number; materialCost: number; protectionCost: number; capitalRequired: number; grossSaleRevenue: number;
+  marketFee: number; saleRevenue: number; profit: number; profitRate: number; netTrainingCost: number; costPerExperience: number;
+  volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
+}
+export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem; originLevel?: number; targetLevel: number; protectLevel: number; buffs?: EnhancingBuffs; marketFeeRate?: number; actionSeconds?: number }
+
+const key = (h: string, l = 0) => `${h}\0${l}`;
+const clamp = (n: number) => Math.max(0, Math.min(1, n));
+
+/** Fundamental-matrix solution of the Milkonomy enhancement state transitions. */
+export function buildEnhancementTransitions(item: EnhanceableItem, buffs: EnhancingBuffs, targetLevel: number, protectLevel: number) {
+  if (!Number.isInteger(targetLevel) || targetLevel < 1 || targetLevel > item.steps.length) throw new RangeError('invalid target level');
+  if (!Number.isInteger(protectLevel) || protectLevel < 1 || protectLevel > targetLevel) throw new RangeError('invalid protection level');
+  const rates = item.steps.slice(0, targetLevel).map((step, level) => {
+    const itemLevel = item.itemLevel ?? 0;
+    const levelRatio = buffs.playerLevel >= itemLevel ? .0005 * (buffs.playerLevel - itemLevel) : itemLevel ? -.5 * (1 - buffs.playerLevel / itemLevel) : 0;
+    const success = clamp(step.baseSuccessRate * (1 + levelRatio + buffs.success));
+    const blessed = clamp(buffs.blessed);
+    return { level, success, normalUp: success * (1 - blessed), leapUp: success * blessed, failure: 1 - success };
+  });
+  const q = Array.from({ length: targetLevel }, () => Array(targetLevel).fill(0));
+  for (const r of rates) {
+    const add = (destination: number, probability: number) => { if (destination < targetLevel) q[r.level]![destination]! += probability; };
+    add(r.level + 1, r.normalUp); add(r.level + 2, r.leapUp);
+    add(r.level >= protectLevel ? r.level - 1 : 0, r.failure);
+  }
+  return { q, rates };
 }
 
-export interface PlayerProfile {
-  level: number;
-  levelBonus?: number;
-  equipmentSuccessBonus?: number;
-  communitySuccessBonus?: number;
-  achievementSuccessBonus?: number;
-  shrineSuccessBonus?: number;
-  experienceBonus?: number;
+function solveVisits(q: number[][], origin: number): number[] {
+  const n = q.length;
+  const a = Array.from({ length: n }, (_, row) => [...Array.from({ length: n }, (_, col) => (row === col ? 1 : 0) - q[col]![row]!), row === origin ? 1 : 0]);
+  for (let col = 0; col < n; col++) {
+    let pivot = col; for (let row = col + 1; row < n; row++) if (Math.abs(a[row]![col]!) > Math.abs(a[pivot]![col]!)) pivot = row;
+    [a[col], a[pivot]] = [a[pivot]!, a[col]!];
+    const divisor = a[col]![col]!; if (Math.abs(divisor) < 1e-14) throw new Error('enhancement transition matrix is singular');
+    for (let j = col; j <= n; j++) a[col]![j]! /= divisor;
+    for (let row = 0; row < n; row++) if (row !== col) { const factor = a[row]![col]!; for (let j = col; j <= n; j++) a[row]![j]! -= factor * a[col]![j]!; }
+  }
+  return a.map(row => row[n]!);
 }
 
-const quoteKey = (hrid: string, level: number) => `${hrid}\0${level}`;
+export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementStrategyResult {
+  const { snapshot, item, targetLevel, protectLevel } = input; const origin = input.originLevel ?? 0;
+  if (origin < 0 || origin >= targetLevel) throw new RangeError('origin level must be below target');
+  const buffs = input.buffs ?? { playerLevel: 0, success: 0, blessed: 0, experience: 0, speed: 0 };
+  const { q, rates } = buildEnhancementTransitions(item, buffs, targetLevel, protectLevel);
+  const visits = solveVisits(q, origin); const quotes = new Map(snapshot.quotes.map(qt => [key(qt.itemHrid, qt.enhancementLevel), qt]));
+  const missing = new Set<string>(); const ask = (hrid: string, level = 0) => { if (hrid === '/items/coin') return 1; const value = quotes.get(key(hrid, level))?.ask; if (value == null) missing.add(`${hrid}@+${level}:ask`); return value ?? NaN; };
+  const bid = (hrid: string, level = 0) => { const value = quotes.get(key(hrid, level))?.bid; if (value == null) missing.add(`${hrid}@+${level}:bid`); return value ?? NaN; };
+  const protectionHrids = [...(item.protectionItemHrids ?? [item.itemHrid]), '/items/mirror_of_protection'];
+  const protectionCandidates = protectionHrids.map(hrid => ({ hrid, price: quotes.get(key(hrid, 0))?.ask ?? NaN })).filter(x => Number.isFinite(x.price));
+  const protection = protectionCandidates.reduce<{hrid: string; price: number} | null>((best, x) => !best || x.price < best.price ? x : best, null);
+  const expectedProtections = rates.reduce((sum, r) => sum + visits[r.level]! * r.failure * (r.level >= protectLevel ? 1 : 0), 0);
+  if (expectedProtections !== 0 && !protection) missing.add('protection-item:ask');
+  const baseItemCost = ask(item.itemHrid, origin); let materialCost = 0; let totalExperience = 0;
+  const steps = rates.map(r => {
+    const attempts = visits[r.level]!; let cost = 0;
+    for (const material of item.steps[r.level]!.materials) cost += attempts * material.quantity * ask(material.itemHrid);
+    const experience = attempts * (r.success + .1 * r.failure) * (1.4 * (r.level + 1) * (10 + (item.itemLevel ?? 0))) * (1 + buffs.experience);
+    materialCost += cost; totalExperience += experience;
+    return { level: r.level, successRate: r.success, normalUpRate: r.normalUp, leapUpRate: r.leapUp, failureRate: r.failure, attempts, protections: attempts * r.failure * (r.level >= protectLevel ? 1 : 0), experience, materialCost: cost };
+  });
+  const protectionCost = expectedProtections * (protection?.price ?? NaN); if (expectedProtections === 0) { /* NaN-free no-protection strategy */ }
+  const actualProtectionCost = expectedProtections === 0 ? 0 : protectionCost;
+  const grossRevenue = bid(item.itemHrid, targetLevel); const marketFee = grossRevenue * (input.marketFeeRate ?? .05);
+  const cashCost = baseItemCost + materialCost + actualProtectionCost; const netRevenue = grossRevenue - marketFee;
+  const expectedProfit = netRevenue - cashCost; const expectedActions = visits.reduce((a, b) => a + b, 0); const calculable = missing.size === 0 && [cashCost, grossRevenue].every(Number.isFinite);
+  return { protectLevel, protectionItemHrid: expectedProtections ? protection?.hrid ?? null : null, calculable, missingPrices: [...missing], expectedActions, expectedProtections,
+    expectedTime: expectedActions * (input.actionSeconds ?? 0) / (1 + buffs.speed), baseItemCost, materialCost, protectionCost: actualProtectionCost, cashCost,
+    grossRevenue, marketFee, netRevenue, expectedProfit, profitRate: expectedProfit / cashCost, totalExperience, netTrainingCost: cashCost - netRevenue,
+    costPerExperience: (cashCost - netRevenue) / totalExperience, visits, steps };
+}
 
-/** Exact expected-value recurrence for destructive failures. */
-export function calculateRankings(snapshot: MarketSnapshot, items: ReadonlyArray<EnhanceableItem>, player: number | PlayerProfile, now = new Date(), marketFeeRate = 0): RankingRow[] {
-  if (marketFeeRate < 0 || marketFeeRate >= 1) throw new RangeError('market fee rate must be in [0, 1)');
-  const quotes = new Map(snapshot.quotes.map(q => [quoteKey(q.itemHrid, q.enhancementLevel), q]));
-  const profile: PlayerProfile = typeof player === 'number' ? { level: player } : player;
-  const effectiveLevel = profile.level + (profile.levelBonus ?? 0);
-  const configuredSuccessBonus = (profile.equipmentSuccessBonus ?? 0) + (profile.communitySuccessBonus ?? 0) +
-    (profile.achievementSuccessBonus ?? 0) + (profile.shrineSuccessBonus ?? 0);
-  const experienceMultiplier = 1 + (profile.experienceBonus ?? 0);
-  const rows: RankingRow[] = [];
-  for (const item of items) {
-    for (let from = 0; from < item.steps.length; from++) {
-      for (let to = from + 1; to <= item.steps.length; to++) {
-        const buy = quotes.get(quoteKey(item.itemHrid, from));
-        const sell = quotes.get(quoteKey(item.itemHrid, to));
-        if (buy?.ask == null || sell?.bid == null) continue;
-        let expectedInputUnits = 1;
-        let totalExperience = 0;
-        let materialCost = 0;
-        const details: RankingRow['steps'] = [];
-        let valid = true;
-        const selectedSteps = item.steps.slice(from, to);
-        const requiredAttempts = new Map<number, number>();
-        for (let index = selectedSteps.length - 1, requiredOutputs = 1; index >= 0; index--) {
-          const step = selectedSteps[index]!;
-          const itemLevel = item.itemLevel ?? 0;
-          const levelRatio = effectiveLevel >= itemLevel ? (effectiveLevel - itemLevel) * 0.0005 : -0.5 * (1 - effectiveLevel / itemLevel);
-          const successRate = Math.max(0.000001, Math.min(1, step.baseSuccessRate * (1 + levelRatio + configuredSuccessBonus)));
-          const attempts = requiredOutputs / successRate;
-          requiredAttempts.set(step.toLevel, attempts);
-          requiredOutputs = attempts;
-        }
-        expectedInputUnits = requiredAttempts.get(selectedSteps[0]!.toLevel)!;
-        for (const step of selectedSteps) {
-          const itemLevel = item.itemLevel ?? 0;
-          const levelRatio = effectiveLevel >= itemLevel ? (effectiveLevel - itemLevel) * 0.0005 : -0.5 * (1 - effectiveLevel / itemLevel);
-          const successRate = Math.max(0.000001, Math.min(1, step.baseSuccessRate * (1 + levelRatio + configuredSuccessBonus)));
-          const attempts = requiredAttempts.get(step.toLevel)!;
-          let stepMaterials = 0;
-          for (const material of step.materials) {
-            const materialQuote = quotes.get(quoteKey(material.itemHrid, 0));
-            const materialPrice = material.itemHrid === '/items/coin' ? 1 : materialQuote?.ask;
-            if (materialPrice == null) { valid = false; break; }
-            stepMaterials += attempts * material.quantity * materialPrice;
-          }
-          if (!valid) break;
-          totalExperience += attempts * step.experience * experienceMultiplier;
-          materialCost += stepMaterials;
-          details.push({ toLevel: step.toLevel, successRate, attempts, experience: attempts * step.experience * experienceMultiplier, inputCost: expectedInputUnits * buy.ask, materialCost: stepMaterials });
-        }
-        if (!valid) continue;
-        const purchaseCost = expectedInputUnits * buy.ask;
-        const totalCost = purchaseCost + materialCost;
-        const grossSaleRevenue = sell.bid;
-        const marketFee = grossSaleRevenue * marketFeeRate;
-        const saleRevenue = grossSaleRevenue - marketFee;
-        const preTaxProfit = grossSaleRevenue - totalCost;
-        const profit = saleRevenue - totalCost;
-        const midpoint = (buy.ask + (buy.bid ?? buy.ask)) / 2;
-        const spread = midpoint ? (buy.ask - (buy.bid ?? buy.ask)) / midpoint : 0;
-        const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume);
-        const ageHours = Math.max(0, (now.valueOf() - new Date(snapshot.timestamp).valueOf()) / 3_600_000);
-        const risks: string[] = [];
-        if (volume < 5) risks.push('低成交量');
-        if (spread > 0.2) risks.push('买卖价差较大');
-        if (ageHours > 2) risks.push('市场数据陈旧');
-        rows.push({ id: `${item.itemHrid}:${from}:${to}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: from, toLevel: to,
-          successRate: details.at(-1)!.successRate, expectedAttempts: expectedInputUnits, totalExperience,
-          purchaseCost, materialCost, grossSaleRevenue, marketFee, saleRevenue, preTaxProfit, profit, costPerExperience: totalCost / totalExperience,
-          capitalRequired: totalCost, volume, spread, snapshotTimestamp: snapshot.timestamp,
-          formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks, steps: details });
-      }
-    }
+export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protectLevel'>): ProtectionEvaluation | null {
+  const allStrategies = Array.from({ length: input.targetLevel }, (_, i) => evaluateEnhancementStrategy({ ...input, protectLevel: i + 1 }));
+  const valid = allStrategies.filter(x => x.calculable); if (!valid.length) return null;
+  return { bestStrategy: valid.reduce((a, b) => b.cashCost < a.cashCost ? b : a), allStrategies };
+}
+
+/** Shared project set; profit and training views only sort/filter these rows differently. */
+export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05): RankingRow[] {
+  const resolved = typeof buffs === 'number' ? { playerLevel: buffs, success: 0, blessed: 0, experience: 0, speed: 0 } : buffs; const rows: RankingRow[] = [];
+  for (const item of items) for (let targetLevel = 1; targetLevel <= item.steps.length; targetLevel++) {
+    const evaluation = evaluateProtectionStrategies({ snapshot, item, targetLevel, buffs: resolved, marketFeeRate }); if (!evaluation) continue;
+    const b = evaluation.bestStrategy; const buy = snapshot.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === 0)!; const sell = snapshot.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === targetLevel)!;
+    const midpoint = (buy.ask! + (buy.bid ?? buy.ask!)) / 2; const spread = midpoint ? (buy.ask! - (buy.bid ?? buy.ask!)) / midpoint : 0; const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume); const risks: string[] = [];
+    if (volume < 5) risks.push('低成交量'); if (spread > .2) risks.push('买卖价差较大'); if ((now.valueOf() - new Date(snapshot.timestamp).valueOf()) / 36e5 > 2) risks.push('市场数据陈旧');
+    rows.push({ id: `${item.itemHrid}:0:${targetLevel}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: 0, toLevel: targetLevel, bestStrategy: b, allStrategies: evaluation.allStrategies,
+      expectedAttempts: b.expectedActions, expectedProtections: b.expectedProtections, totalExperience: b.totalExperience, purchaseCost: b.baseItemCost, materialCost: b.materialCost, protectionCost: b.protectionCost,
+      capitalRequired: b.cashCost, grossSaleRevenue: b.grossRevenue, marketFee: b.marketFee, saleRevenue: b.netRevenue, profit: b.expectedProfit, profitRate: b.profitRate,
+      netTrainingCost: b.netTrainingCost, costPerExperience: b.costPerExperience, volume, spread, snapshotTimestamp: snapshot.timestamp, formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks });
   }
   return rows;
 }
+
+export const rankProfitProjects = (rows: readonly RankingRow[]) => rows.filter(r => r.profit > 0).sort((a, b) => b.profit - a.profit);
+export const rankTrainingProjects = (rows: readonly RankingRow[]) => [...rows].sort((a, b) => a.costPerExperience - b.costPerExperience);
