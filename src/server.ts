@@ -24,7 +24,8 @@ createServer(async (request, response) => {
       if (!Number.isInteger(level) || level < 0 || level > 200) return json(response, 400, { error: '强化等级必须是 0–200 的整数' });
       if (!Number.isFinite(feeRate) || feeRate < 0 || feeRate >= 1) return json(response, 400, { error: '市场手续费率必须在 0（含）到 1（不含）之间' });
       const snapshot = await store.latest();
-      if (!snapshot) return json(response, 200, { timestamp: null, rows: [], message: '还没有市场快照，请点击“更新市场数据”。' });
+      const catalogItems = enhanceableItems.map(({ itemHrid, name }) => ({ itemHrid, itemName: name }));
+      if (!snapshot) return json(response, 200, { timestamp: null, rows: [], marketItems: [], catalogItems, message: '还没有市场快照，请点击“更新市场数据”。' });
       const percent = (name: string) => Number(url.searchParams.get(name) ?? 0) / 100;
       const profile = {
         level,
@@ -34,12 +35,16 @@ createServer(async (request, response) => {
         experienceBonus: percent('experienceBonus'),
       };
       if (Object.values(profile).some(value => !Number.isFinite(value))) return json(response, 400, { error: '玩家加成必须是有效数字' });
-      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, catalogSize: enhanceableItems.length, rows: calculateRankings(snapshot, enhanceableItems, profile, new Date(), feeRate) });
+      const names = new Map(enhanceableItems.map(item => [item.itemHrid, item.name]));
+      const marketItems = snapshot.quotes.map(quote => ({ ...quote, itemName: names.get(quote.itemHrid) ?? quote.itemHrid.split('/').at(-1)!.replaceAll('_', ' ') }));
+      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, catalogSize: enhanceableItems.length, catalogItems, quoteCount: snapshot.quotes.length,
+        marketItemCount: new Set(snapshot.quotes.map(quote => quote.itemHrid)).size, marketItems,
+        rows: calculateRankings(snapshot, enhanceableItems, profile, new Date(), feeRate) });
     }
     const path = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     if (!/^[\w.-]+$/.test(path)) return json(response, 404, { error: 'not found' });
     const body = await readFile(join(publicDir, path));
-    response.writeHead(200, { 'content-type': types[extname(path)] ?? 'application/octet-stream' }); response.end(body);
+    response.writeHead(200, { 'content-type': types[extname(path)] ?? 'application/octet-stream', 'cache-control': 'no-store' }); response.end(body);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return json(response, 404, { error: 'not found' });
     json(response, 500, { error: error instanceof Error ? error.message : String(error) });
