@@ -1,7 +1,7 @@
 import { sourceItems, successRates } from './generated-catalog.js';
 
 export const GAME_DATA_VERSION = 'milkonomy-game-data-v1.20260309.0';
-export const FORMULA_VERSION = 'milkonomy-success-ratio-v3';
+export const FORMULA_VERSION = 'milkonomy-markov-v1-febe90f';
 
 export interface EnhancementStep {
   toLevel: number;
@@ -15,6 +15,7 @@ export interface EnhanceableItem {
   name: string;
   englishName?: string;
   itemLevel?: number;
+  protectionItemHrids?: ReadonlyArray<string>;
   steps: ReadonlyArray<EnhancementStep>;
 }
 

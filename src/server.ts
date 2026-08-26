@@ -27,13 +27,9 @@ createServer(async (request, response) => {
       const catalogItems = enhanceableItems.map(({ itemHrid, name }) => ({ itemHrid, itemName: name }));
       if (!snapshot) return json(response, 200, { timestamp: null, rows: [], marketItems: [], catalogItems, message: '还没有市场快照，请点击“更新市场数据”。' });
       const percent = (name: string) => Number(url.searchParams.get(name) ?? 0) / 100;
-      const profile = {
-        level,
-        levelBonus: Number(url.searchParams.get('levelBonus') ?? 0),
-        equipmentSuccessBonus: percent('equipmentSuccess'), communitySuccessBonus: percent('communitySuccess'),
-        achievementSuccessBonus: percent('achievementSuccess'), shrineSuccessBonus: percent('shrineSuccess'),
-        experienceBonus: percent('experienceBonus'),
-      };
+      const profile = { playerLevel: level + Number(url.searchParams.get('levelBonus') ?? 0),
+        success: percent('equipmentSuccess') + percent('communitySuccess') + percent('achievementSuccess') + percent('shrineSuccess'),
+        blessed: 0, experience: percent('experienceBonus'), speed: 0 };
       if (Object.values(profile).some(value => !Number.isFinite(value))) return json(response, 400, { error: '玩家加成必须是有效数字' });
       const names = new Map(enhanceableItems.map(item => [item.itemHrid, item.name]));
       const marketItems = snapshot.quotes.map(quote => ({ ...quote, itemName: names.get(quote.itemHrid) ?? quote.itemHrid.split('/').at(-1)!.replaceAll('_', ' ') }));

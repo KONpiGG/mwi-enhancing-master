@@ -1,32 +1,26 @@
 # Third-party data and implementation notices
 
-The expected-value implementation in
-`src/enhancing/calculator.ts` was written for this project and is intentionally separate from the
-versioned records in `src/game-data/catalog.ts`.
+## Milkonomy
+
+This project ports the enhancement transition model and player-preset/Buff data model from
+[Milkonomy](https://github.com/Polokikiki/Milkonomy), fixed at commit
+`febe90f14f7ea1e51937cc888f6f6e1907c58fff`.
+
+Ported/adapted sources:
+
+- `src/calculator/enhance.ts` → `src/enhancing/calculator.ts` (state transitions, protection usage, ingredient structure)
+- `src/pinia/stores/player.ts` and `src/pages/dashboard/components/ActionConfig.vue` → `src/enhancing/preset.ts` (preset shape)
+- `src/common/apis/player/index.ts` → `src/enhancing/preset.ts` and `src/enhancing/calculator.ts` (Buff and level-ratio derivation)
+- `src/pages/enhancer/index.vue` → `evaluateProtectionStrategies()` (all protection thresholds and minimum-cost selection)
+
+Milkonomy is MIT licensed. Copyright (c) 2025 luyuhao. The complete license text is retained in
+`LICENSE.Milkonomy`.
 
 ## Milky Way Idle
 
-- **Official marketplace snapshot** — `https://www.milkywayidle.com/game_data/marketplace.json`.
-  The application reads the public hourly snapshot at run time. Compact fields and the nested
-  `marketData[itemHrid][enhancementLevel]` layout are parsed locally; snapshots are not redistributed.
-- **Official game data/client and Enhancing UI** — `https://www.milkywayidle.com/` and the public
-  game-data responses loaded by that client. Item HRIDs/names, per-tier base success chances and
-  experience records in catalog version `mwi-community-2025-02-09` are a small manually transcribed
-  subset. Milky Way Idle names and data remain the property of its publisher.
-- **Milky Way Idle Wiki, Enhancing** — `https://milkywayidle.wiki.gg/wiki/Enhancing`, consulted for
-  the destructive-failure process and the Enhancing skill success bonus.
+- Official marketplace snapshot: `https://www.milkywayidle.com/game_data/marketplace.json`. Snapshots are
+  fetched at runtime and are not redistributed.
+- The generated catalog is derived from Milkonomy's `v1.20260309.0` public game-data export. Milky Way
+  Idle names and game data remain the property of its publisher.
 
-## Community implementations consulted
-
-- **Milkonomy** — `https://github.com/Polokikiki/Milkonomy` (MIT, copyright 2025 luyuhao). The
-  `v1.20260309.0` public game-data export supplies the generated enhanceable-item catalog, material
-  costs, item levels and success-rate table. Its player-level success-ratio behavior is reproduced
-  with attribution; server-side snapshot collection remains independent and never merges missing
-  quotes with older data.
-- **MWI Tools** — `https://github.com/holychikenz/MWIApi` (repository name and URL retained here for
-  provenance). Its public calculator was used only as an independent behavioral comparison; no code
-  was copied.
-
-The exact provenance version is intentionally a catalog constant rather than part of the formula.
-Before expanding the catalog, values must be re-exported from current official client data and the
-version string and this notice must be updated. Live market data is never committed.
+The market collector is original to this repository. Missing quotes are never filled with zero or older data.
