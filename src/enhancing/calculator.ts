@@ -24,6 +24,17 @@ export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem
 
 const key = (h: string, l = 0) => `${h}\0${l}`;
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
+const RISK_SIMULATION_RUNS = 1_000;
+const quoteIndexes = new WeakMap<MarketSnapshot, Map<string, MarketSnapshot['quotes'][number]>>();
+
+function quoteIndex(snapshot: MarketSnapshot) {
+  let index = quoteIndexes.get(snapshot);
+  if (!index) {
+    index = new Map(snapshot.quotes.map(quote => [key(quote.itemHrid, quote.enhancementLevel), quote]));
+    quoteIndexes.set(snapshot, index);
+  }
+  return index;
+}
 
 /** Fundamental-matrix solution of the Milkonomy enhancement state transitions. */
 export function buildEnhancementTransitions(item: EnhanceableItem, buffs: EnhancingBuffs, targetLevel: number, protectLevel: number) {
@@ -75,7 +86,7 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   if (origin < 0 || origin >= targetLevel) throw new RangeError('origin level must be below target');
   const buffs = input.buffs ?? { playerLevel: 0, success: 0, blessed: 0, experience: 0, speed: 0 };
   const { q, rates } = buildEnhancementTransitions(item, buffs, targetLevel, protectLevel);
-  const visits = solveVisits(q, origin); const quotes = new Map(snapshot.quotes.map(qt => [key(qt.itemHrid, qt.enhancementLevel), qt]));
+  const visits = solveVisits(q, origin); const quotes = quoteIndex(snapshot);
   const missing = new Set<string>(); const ask = (hrid: string, level = 0) => { if (hrid === '/items/coin') return 1; const value = quotes.get(key(hrid, level))?.ask; if (value == null) missing.add(`${hrid}@+${level}:ask`); return value ?? NaN; };
   const bid = (hrid: string, level = 0) => { const value = quotes.get(key(hrid, level))?.bid; if (value == null) missing.add(`${hrid}@+${level}:bid`); return value ?? NaN; };
   const protectionHrids = [...(item.protectionItemHrids ?? [item.itemHrid]), '/items/mirror_of_protection'];
@@ -110,16 +121,16 @@ export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protect
 
 /** Shared project set; profit and training views only sort/filter these rows differently. */
 export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12): RankingRow[] {
-  const resolved = typeof buffs === 'number' ? { playerLevel: buffs, success: 0, blessed: 0, experience: 0, speed: 0 } : buffs; const rows: RankingRow[] = [];
+  const resolved = typeof buffs === 'number' ? { playerLevel: buffs, success: 0, blessed: 0, experience: 0, speed: 0 } : buffs; const rows: RankingRow[] = []; const quotes = quoteIndex(snapshot);
   for (const item of items) for (let originLevel = 0; originLevel < item.steps.length; originLevel++) for (let targetLevel = originLevel + 1; targetLevel <= item.steps.length; targetLevel++) {
-    const buy = snapshot.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === originLevel); const sell = snapshot.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === targetLevel); if (buy?.ask == null || sell?.bid == null) continue;
+    const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel)); if (buy?.ask == null || sell?.bid == null) continue;
     const evaluation = evaluateProtectionStrategies({ snapshot, item, originLevel, targetLevel, buffs: resolved, marketFeeRate, actionSeconds }); if (!evaluation) continue;
     const b = evaluation.bestStrategy;
     const midpoint = (buy.ask! + (buy.bid ?? buy.ask!)) / 2; const spread = midpoint ? (buy.ask! - (buy.bid ?? buy.ask!)) / midpoint : 0; const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume); const risks: string[] = [];
     if (volume < 5) risks.push('低成交量'); if (spread > .2) risks.push('买卖价差较大'); if ((now.valueOf() - new Date(snapshot.timestamp).valueOf()) / 36e5 > 2) risks.push('市场数据陈旧');
     const totalCost = b.cashCost + b.marketFee;
     const profit = b.grossRevenue - totalCost;
-    const simulation = simulateRisk(b, originLevel, targetLevel, buy.ask!, b.grossRevenue, b.marketFee, 10_000, hash(`${item.itemHrid}:${originLevel}:${targetLevel}`));
+    const simulation = simulateRisk(b, originLevel, targetLevel, buy.ask!, b.grossRevenue, b.marketFee, RISK_SIMULATION_RUNS, hash(`${item.itemHrid}:${originLevel}:${targetLevel}`));
     const downsideLossRate = totalCost > 0 ? Math.min(1, Math.max(0, -simulation.p10) / totalCost) : 0;
     const riskScore = 100 * (simulation.lossProbability * .6 + downsideLossRate * .4);
     rows.push({ id: `${item.itemHrid}:${originLevel}:${targetLevel}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: originLevel, toLevel: targetLevel, bestStrategy: b, allStrategies: evaluation.allStrategies,
@@ -127,7 +138,7 @@ export function calculateRankings(snapshot: MarketSnapshot, items: readonly Enha
       capitalRequired: b.cashCost, grossSaleRevenue: b.grossRevenue, marketFee: b.marketFee, saleRevenue: b.netRevenue, totalCost, profit, profitRate: totalCost > 0 ? profit/totalCost : NaN,
       expectedTime:b.expectedTime, experiencePerHour:b.expectedTime > 0 ? b.totalExperience*3600/b.expectedTime : null, experiencePerGold:totalCost > 0 ? b.totalExperience/totalCost : null, experienceEfficiency:null, hourlyProfit:b.expectedTime > 0 ? profit*3600/b.expectedTime : null, attemptVariance:b.attemptVariance,
       netTrainingCost: b.netTrainingCost, costPerExperience: b.costPerExperience, recent72hVolume:null, volume, spread, snapshotTimestamp: snapshot.timestamp, formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks,
-      lossProbability:simulation.lossProbability, profitP10:simulation.p10, profitP50:simulation.p50, profitP90:simulation.p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:10_000 });
+      lossProbability:simulation.lossProbability, profitP10:simulation.p10, profitP50:simulation.p50, profitP90:simulation.p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:RISK_SIMULATION_RUNS });
   }
   applyExperienceEfficiency(rows);
   return rows;
