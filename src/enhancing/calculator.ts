@@ -25,7 +25,10 @@ export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem
 
 const key = (h: string, l = 0) => `${h}\0${l}`;
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
-const RISK_SIMULATION_RUNS = 1_000;
+// Risk is secondary metadata, while expected profit/experience is solved exactly.
+// Keeping this bounded makes it possible to evaluate the entire quoted market
+// instead of spending most of the request on Monte Carlo samples.
+const RISK_SIMULATION_RUNS = 100;
 const quoteIndexes = new WeakMap<MarketSnapshot, Map<string, MarketSnapshot['quotes'][number]>>();
 
 function quoteIndex(snapshot: MarketSnapshot) {
@@ -125,22 +128,16 @@ export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protect
 }
 
 /** Shared project set; profit and training views only sort/filter these rows differently. */
-export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12, projectLimit = Infinity): RankingRow[] {
+export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12): RankingRow[] {
   const resolved = typeof buffs === 'number' ? { playerLevel: buffs, success: 0, blessed: 0, experience: 0, speed: 0 } : buffs; const rows: RankingRow[] = []; const quotes = quoteIndex(snapshot);
-  // A complete catalog can contain more than 100,000 quoted level pairs. Ranking
-  // all of them (including 1,000 risk runs apiece) ties up the single Node event
-  // loop for minutes. The web endpoint supplies a limit; prioritize liquid pairs
-  // with a promising price gap before doing any matrix solves or simulations.
-  const candidates: { item: EnhanceableItem; originLevel: number; targetLevel: number; priority: number }[] = [];
+  // A market-only shortlist is not valid here: player buffs can change which
+  // project wins. Enumerate every origin/target pair that has usable quotes.
+  const candidates: { item: EnhanceableItem; originLevel: number; targetLevel: number }[] = [];
   for (const item of items) for (let originLevel = 0; originLevel < item.steps.length; originLevel++) for (let targetLevel = originLevel + 1; targetLevel <= item.steps.length; targetLevel++) {
     const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel));
     if (buy?.ask == null || sell?.bid == null) continue;
-    const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume);
-    const priceGap = (sell.bid - buy.ask) / Math.max(1, buy.ask);
-    const complexityPenalty = targetLevel * .5 + (targetLevel - originLevel) * .25;
-    candidates.push({ item, originLevel, targetLevel, priority: Math.log1p(Math.max(0, volume)) * 10 + Math.log1p(Math.max(0, priceGap)) * 2 - complexityPenalty });
+    candidates.push({ item, originLevel, targetLevel });
   }
-  if (candidates.length > projectLimit) candidates.sort((a, b) => b.priority - a.priority).length = projectLimit;
   for (const { item, originLevel, targetLevel } of candidates) {
     const buy = quotes.get(key(item.itemHrid, originLevel))!; const sell = quotes.get(key(item.itemHrid, targetLevel))!;
     const evaluation = evaluateProtectionStrategies({ snapshot, item, originLevel, targetLevel, buffs: resolved, marketFeeRate, actionSeconds }); if (!evaluation) continue;
@@ -177,8 +174,8 @@ function simulateRisk(strategy: EnhancementStrategyResult, origin: number, targe
   profits.sort((a,b)=>a-b); return {lossProbability:losses/runs,p10:quantile(profits,.1),p50:quantile(profits,.5),p90:quantile(profits,.9)};
 }
 function riskLevel(score:number) { return score<=20?'很低':score<=40?'低':score<=60?'中':score<=80?'高':'很高'; }
-function percentile(values:number[], value:number) { if(values.length===1)return 1; const below=values.filter(x=>x<value).length, equal=values.filter(x=>x===value).length; return (below+(equal-1)/2)/(values.length-1); }
-function applyExperienceEfficiency(rows:RankingRow[]) { const time=rows.flatMap(r=>r.experiencePerHour==null?[]:[r.experiencePerHour]), gold=rows.flatMap(r=>r.experiencePerGold==null?[]:[r.experiencePerGold]); for(const r of rows) if(r.experiencePerHour!=null&&r.experiencePerGold!=null) r.experienceEfficiency=100*Math.sqrt(percentile(time,r.experiencePerHour)*percentile(gold,r.experiencePerGold)); }
+function percentileRanks(values:number[]) { const sorted=[...values].sort((a,b)=>a-b), ranks=new Map<number,number>(); for(let start=0;start<sorted.length;) { let end=start+1; while(end<sorted.length&&sorted[end]===sorted[start])end++; ranks.set(sorted[start]!,sorted.length===1?1:((start+end-1)/2)/(sorted.length-1)); start=end; } return ranks; }
+function applyExperienceEfficiency(rows:RankingRow[]) { const time=rows.flatMap(r=>r.experiencePerHour==null?[]:[r.experiencePerHour]), gold=rows.flatMap(r=>r.experiencePerGold==null?[]:[r.experiencePerGold]), timeRanks=percentileRanks(time), goldRanks=percentileRanks(gold); for(const r of rows) if(r.experiencePerHour!=null&&r.experiencePerGold!=null) r.experienceEfficiency=100*Math.sqrt(timeRanks.get(r.experiencePerHour)!*goldRanks.get(r.experiencePerGold)!); }
 
 export const rankProfitProjects = (rows: readonly RankingRow[]) => rows.filter(r => r.profit > 0).sort((a, b) => b.profit - a.profit);
 export const rankTrainingProjects = (rows: readonly RankingRow[]) => [...rows].sort((a, b) => a.costPerExperience - b.costPerExperience);
