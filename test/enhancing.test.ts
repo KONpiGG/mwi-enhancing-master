@@ -4,6 +4,7 @@ import { buildEnhancementTransitions, calculateRankings, evaluateEnhancementStra
 import { deriveEnhancingBuffs, type EnhancingPreset, type PresetGameData } from '../src/enhancing/preset.js';
 import type { EnhanceableItem } from '../src/game-data/catalog.js';
 import type { MarketSnapshot } from '../src/market/types.js';
+import { presetOptions } from '../src/enhancing/game-preset-data.js';
 
 const item: EnhanceableItem = { itemHrid: '/items/sword', name: 'Sword', itemLevel: 10, protectionItemHrids: ['/items/protector'], steps: Array.from({ length: 7 }, (_, i) => ({ toLevel: i + 1, baseSuccessRate: .5 - i * .04, experience: 0, materials: [{ itemHrid: '/items/dust', quantity: 2 }] })) };
 const quotes = Array.from({ length: 8 }, (_, enhancementLevel) => ({ itemHrid: item.itemHrid, enhancementLevel, ask: 100 + enhancementLevel * 100, bid: 90 + enhancementLevel * 140, hourlyAverage: 100, hourlyVolume: 20 }));
@@ -54,6 +55,11 @@ test('reference community and achievement buffs use their official enhancement f
   const preset: EnhancingPreset = { id: 'p', name: 'p', enhancing: { playerLevel: 100, tool: {}, charm: {}, teas: [] }, specialEquipment: { hands: {}, body: {}, legs: {}, back: {}, neck: {}, earrings: {}, ring: {}, pouch: {} }, seals: [], communityBuffs: { speed: { hrid: 'speed', level: 3 }, moo: { hrid: 'moo', level: 1 } }, achievementBuffs: { champion: { enabled: true } }, shrines: {} };
   const data: PresetGameData = { equipment: {}, consumables: {}, seals: {}, communityBuffs: { speed: [{ attribute: 'Speed', value: .2, perEnhanceLevel: .005, levelMode: 'base-plus' }], moo: [{ attribute: 'Experience', value: .05 }] }, achievements: { champion: [{ attribute: 'Success', value: .002 }] }, shrines: {} };
   const result = deriveEnhancingBuffs(preset, data); assert.deepEqual({ ...result, speed: Number(result.speed.toFixed(3)) }, { playerLevel: 100, success: .002, blessed: 0, experience: .05, speed: .21 });
+});
+test('preset equipment options cover every requested slot with Chinese names', () => {
+  assert.deepEqual(new Set(presetOptions.map(option => option.slot)), new Set(['tool', 'charm', 'hands', 'neck', 'earrings', 'ring', 'pouch']));
+  assert.ok(presetOptions.every(option => /[\u3400-\u9fff]/u.test(option.name)));
+  assert.ok(presetOptions.some(option => option.hrid === '/items/philosophers_earrings' && option.name === '贤者耳环'));
 });
 test('ranking exposes time, labor, experience rate and Markov attempt variance', () => {
   const row = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp), .05, 360, 10)[0]!;

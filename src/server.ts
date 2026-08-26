@@ -32,7 +32,7 @@ createServer(async (request, response) => {
       const preset = createPreset(); preset.enhancing.playerLevel = level;
       const equipment = JSON.parse(url.searchParams.get('equipment') ?? '{}') as Record<string, {hrid?: string; enhanceLevel?: number}>;
       preset.enhancing.tool = equipment.tool ?? {}; preset.enhancing.charm = equipment.charm ?? {};
-      for (const slot of ['hands','body','legs','back','neck'] as const) preset.specialEquipment[slot] = equipment[slot] ?? {};
+      for (const slot of ['hands','neck','earrings','ring','pouch'] as const) preset.specialEquipment[slot] = equipment[slot] ?? {};
       preset.enhancing.teas = (url.searchParams.get('teas') ?? '').split(',').filter(Boolean);
       const community = JSON.parse(url.searchParams.get('communityBuffs') ?? '{}') as Record<string, number>;
       for (const [hrid, buffLevel] of Object.entries(community)) preset.communityBuffs[hrid] = { hrid, level: buffLevel };
