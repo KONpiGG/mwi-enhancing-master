@@ -16,8 +16,9 @@ export interface RankingRow {
   allStrategies: EnhancementStrategyResult[]; expectedAttempts: number; expectedProtections: number; totalExperience: number;
   purchaseCost: number; materialCost: number; protectionCost: number; capitalRequired: number; grossSaleRevenue: number;
   marketFee: number; saleRevenue: number; profit: number; profitRate: number; netTrainingCost: number; costPerExperience: number;
-  expectedTime: number; experiencePerHour: number; laborCost: number; attemptVariance: number;
-  volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
+  expectedTime: number; experiencePerHour: number | null; experiencePerGold: number | null; experienceEfficiency: number | null; hourlyProfit: number | null; attemptVariance: number;
+  recent72hVolume: number | null; volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
+  totalCost: number; lossProbability: number; profitP10: number; profitP50: number; profitP90: number; downsideLossRate: number; riskScore: number; riskLevel: string; simulationRuns: number;
 }
 export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem; originLevel?: number; targetLevel: number; protectLevel: number; buffs?: EnhancingBuffs; marketFeeRate?: number; actionSeconds?: number }
 
@@ -116,14 +117,33 @@ export function calculateRankings(snapshot: MarketSnapshot, items: readonly Enha
     const b = evaluation.bestStrategy;
     const midpoint = (buy.ask! + (buy.bid ?? buy.ask!)) / 2; const spread = midpoint ? (buy.ask! - (buy.bid ?? buy.ask!)) / midpoint : 0; const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume); const risks: string[] = [];
     if (volume < 5) risks.push('低成交量'); if (spread > .2) risks.push('买卖价差较大'); if ((now.valueOf() - new Date(snapshot.timestamp).valueOf()) / 36e5 > 2) risks.push('市场数据陈旧');
+    const totalCost = b.cashCost + b.marketFee;
+    const profit = b.grossRevenue - totalCost;
+    const simulation = simulateRisk(b, originLevel, targetLevel, buy.ask!, b.grossRevenue, b.marketFee, 10_000, hash(`${item.itemHrid}:${originLevel}:${targetLevel}`));
+    const downsideLossRate = totalCost > 0 ? Math.min(1, Math.max(0, -simulation.p10) / totalCost) : 0;
+    const riskScore = 100 * (simulation.lossProbability * .6 + downsideLossRate * .4);
     rows.push({ id: `${item.itemHrid}:${originLevel}:${targetLevel}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: originLevel, toLevel: targetLevel, bestStrategy: b, allStrategies: evaluation.allStrategies,
       expectedAttempts: b.expectedActions, expectedProtections: b.expectedProtections, totalExperience: b.totalExperience, purchaseCost: b.baseItemCost, materialCost: b.materialCost, protectionCost: b.protectionCost,
-      capitalRequired: b.cashCost, grossSaleRevenue: b.grossRevenue, marketFee: b.marketFee, saleRevenue: b.netRevenue, profit: b.expectedProfit - hourlyRate*b.expectedTime/3600, profitRate: (b.expectedProfit-hourlyRate*b.expectedTime/3600)/(b.cashCost+hourlyRate*b.expectedTime/3600),
-      expectedTime:b.expectedTime, experiencePerHour:b.expectedTime ? b.totalExperience*3600/b.expectedTime : 0, laborCost:hourlyRate*b.expectedTime/3600, attemptVariance:b.attemptVariance,
-      netTrainingCost: b.netTrainingCost, costPerExperience: b.costPerExperience, volume, spread, snapshotTimestamp: snapshot.timestamp, formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks });
+      capitalRequired: b.cashCost, grossSaleRevenue: b.grossRevenue, marketFee: b.marketFee, saleRevenue: b.netRevenue, totalCost, profit, profitRate: totalCost > 0 ? profit/totalCost : NaN,
+      expectedTime:b.expectedTime, experiencePerHour:b.expectedTime > 0 ? b.totalExperience*3600/b.expectedTime : null, experiencePerGold:totalCost > 0 ? b.totalExperience/totalCost : null, experienceEfficiency:null, hourlyProfit:b.expectedTime > 0 ? profit*3600/b.expectedTime : null, attemptVariance:b.attemptVariance,
+      netTrainingCost: b.netTrainingCost, costPerExperience: b.costPerExperience, recent72hVolume:null, volume, spread, snapshotTimestamp: snapshot.timestamp, formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks,
+      lossProbability:simulation.lossProbability, profitP10:simulation.p10, profitP50:simulation.p50, profitP90:simulation.p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:10_000 });
   }
+  applyExperienceEfficiency(rows);
   return rows;
 }
+
+function hash(value: string): number { let h=2166136261; for (const c of value) { h^=c.charCodeAt(0); h=Math.imul(h,16777619); } return h>>>0; }
+function random(seed: number) { let state=seed||1; return () => { state=(state+0x6D2B79F5)|0; let t=Math.imul(state^(state>>>15),1|state); t^=t+Math.imul(t^(t>>>7),61|t); return ((t^(t>>>14))>>>0)/4294967296; }; }
+function quantile(sorted: number[], p: number) { return sorted[Math.floor((sorted.length-1)*p)]!; }
+function simulateRisk(strategy: EnhancementStrategyResult, origin: number, target: number, baseCost: number, revenue: number, fee: number, runs: number, seed: number) {
+  const rng=random(seed), profits:number[]=[]; let losses=0;
+  for(let run=0;run<runs;run++) { let level=origin,cost=baseCost+fee,guard=0; while(level<target) { if(++guard>1_000_000) throw new Error('risk simulation did not converge'); const step=strategy.steps[level]!; cost+=step.materialCost/step.attempts; const roll=rng(); if(roll<step.normalUpRate) level++; else if(roll<step.normalUpRate+step.leapUpRate) level+=2; else { if(level>=strategy.protectLevel) { cost+=strategy.protectionCost/strategy.expectedProtections; level--; } else level=0; } } const profit=revenue-cost; profits.push(profit); if(profit<0)losses++; }
+  profits.sort((a,b)=>a-b); return {lossProbability:losses/runs,p10:quantile(profits,.1),p50:quantile(profits,.5),p90:quantile(profits,.9)};
+}
+function riskLevel(score:number) { return score<=20?'很低':score<=40?'低':score<=60?'中':score<=80?'高':'很高'; }
+function percentile(values:number[], value:number) { if(values.length===1)return 1; const below=values.filter(x=>x<value).length, equal=values.filter(x=>x===value).length; return (below+(equal-1)/2)/(values.length-1); }
+function applyExperienceEfficiency(rows:RankingRow[]) { const time=rows.flatMap(r=>r.experiencePerHour==null?[]:[r.experiencePerHour]), gold=rows.flatMap(r=>r.experiencePerGold==null?[]:[r.experiencePerGold]); for(const r of rows) if(r.experiencePerHour!=null&&r.experiencePerGold!=null) r.experienceEfficiency=100*Math.sqrt(percentile(time,r.experiencePerHour)*percentile(gold,r.experiencePerGold)); }
 
 export const rankProfitProjects = (rows: readonly RankingRow[]) => rows.filter(r => r.profit > 0).sort((a, b) => b.profit - a.profit);
 export const rankTrainingProjects = (rows: readonly RankingRow[]) => [...rows].sort((a, b) => a.costPerExperience - b.costPerExperience);
