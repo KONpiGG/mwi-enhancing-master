@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import type { RankingBatch } from './enhancing/calculator.js';
 import { presetGameData, presetOptions } from './enhancing/game-preset-data.js';
 import { createPreset, deriveEnhancingBuffs } from './enhancing/preset.js';
+import { rankingWorkerUrl } from './enhancing/ranking-worker-url.js';
 import { enhanceableItems } from './game-data/catalog.js';
 import { collectSnapshot } from './market/collect.js';
 import { SnapshotStore } from './market/store.js';
@@ -95,7 +96,7 @@ async function readJsonBody(request: import('node:http').IncomingMessage): Promi
 
 function runRankingWorker(request: import('node:http').IncomingMessage, job: unknown): Promise<RankingBatch> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('./enhancing/ranking-worker.js', import.meta.url));
+    const worker = new Worker(rankingWorkerUrl(import.meta.url));
     let settled = false;
     const cancel = () => { if (!settled) { settled = true; void worker.terminate(); reject(new Error('ranking calculation cancelled')); } };
     request.once('aborted', cancel);

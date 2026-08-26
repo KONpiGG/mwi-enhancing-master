@@ -1,15 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Worker } from 'node:worker_threads';
 import { buildEnhancementTransitions, calculateRankings, evaluateEnhancementStrategy, evaluateProtectionStrategies, rankProfitProjects, rankTrainingProjects } from '../src/enhancing/calculator.js';
 import { deriveEnhancingBuffs, type EnhancingPreset, type PresetGameData } from '../src/enhancing/preset.js';
 import type { EnhanceableItem } from '../src/game-data/catalog.js';
 import type { MarketSnapshot } from '../src/market/types.js';
 import { presetOptions } from '../src/enhancing/game-preset-data.js';
+import { rankingWorkerUrl } from '../src/enhancing/ranking-worker-url.js';
 
 const item: EnhanceableItem = { itemHrid: '/items/sword', name: 'Sword', itemLevel: 10, protectionItemHrids: ['/items/protector'], steps: Array.from({ length: 7 }, (_, i) => ({ toLevel: i + 1, baseSuccessRate: .5 - i * .04, experience: 0, materials: [{ itemHrid: '/items/dust', quantity: 2 }] })) };
 const quotes = Array.from({ length: 8 }, (_, enhancementLevel) => ({ itemHrid: item.itemHrid, enhancementLevel, ask: 100 + enhancementLevel * 100, bid: 90 + enhancementLevel * 140, hourlyAverage: 100, hourlyVolume: 20 }));
 const snapshot: MarketSnapshot = { timestamp: '2026-08-25T12:00:00.000Z', quotes: [...quotes, { itemHrid: '/items/dust', enhancementLevel: 0, ask: 5, bid: 4, hourlyAverage: 5, hourlyVolume: 100 }, { itemHrid: '/items/protector', enhancementLevel: 0, ask: 8, bid: 7, hourlyAverage: 8, hourlyVolume: 100 }] };
 const buffs = { playerLevel: 10, success: 0, blessed: 0, experience: 0, speed: 0 };
+
+test('ranking worker URL follows the server runtime extension', () => {
+  assert.equal(rankingWorkerUrl('file:///app/src/server.ts').href, 'file:///app/src/enhancing/ranking-worker-runner.js');
+  assert.equal(rankingWorkerUrl('file:///app/dist/src/server.js').href, 'file:///app/dist/src/enhancing/ranking-worker.js');
+});
+
+test('ranking worker loads from the TypeScript development server', async () => {
+  const worker = new Worker(rankingWorkerUrl(new URL('../src/server.ts', import.meta.url).href));
+  const result = new Promise<{ rows?: unknown[]; error?: string }>((resolve, reject) => {
+    worker.once('message', resolve);
+    worker.once('error', reject);
+  });
+  worker.postMessage({ snapshot, items: [item], buffs, now: snapshot.timestamp, marketFeeRate: .05, hourlyRate: 0, actionSeconds: 12 });
+  const message = await result;
+  await worker.terminate();
+  assert.equal(message.error, undefined);
+  assert.equal(message.rows?.length, 28);
+});
 
 test('one base item is bought regardless of failures and no-protection consumes none', () => {
   const result = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 3, protectLevel: 3, buffs });
