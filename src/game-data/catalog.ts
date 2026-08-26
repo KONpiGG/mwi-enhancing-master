@@ -1,9 +1,7 @@
-/**
- * A deliberately data-only module.  Updating game data must not silently change
- * the calculator implementation in ../enhancing/calculator.ts.
- */
-export const GAME_DATA_VERSION = 'catalog-withdrawn-2026-08-25';
-export const FORMULA_VERSION = 'backward-recurrence-v2';
+import { sourceItems, successRates } from './generated-catalog.js';
+
+export const GAME_DATA_VERSION = 'milkonomy-game-data-v1.20260309.0';
+export const FORMULA_VERSION = 'milkonomy-success-ratio-v3';
 
 export interface EnhancementStep {
   toLevel: number;
@@ -16,10 +14,19 @@ export interface EnhanceableItem {
   itemHrid: string;
   name: string;
   englishName?: string;
+  itemLevel?: number;
   steps: ReadonlyArray<EnhancementStep>;
 }
 
-// The former two-entry catalog was fabricated and could produce financially
-// dangerous output. Keep production empty until an attributable official
-// export is checked in; tests inject deterministic fixtures instead.
-export const enhanceableItems: ReadonlyArray<EnhanceableItem> = [];
+/** Tradable enhanceable items exported by Milkonomy from MWI game data. */
+export const enhanceableItems: ReadonlyArray<EnhanceableItem> = sourceItems.map(item => ({
+  itemHrid: item.itemHrid,
+  name: item.name,
+  itemLevel: item.itemLevel,
+  steps: successRates.map((baseSuccessRate, index) => ({
+    toLevel: index + 1,
+    baseSuccessRate,
+    experience: 1.4 * (index + 1) * (10 + item.itemLevel),
+    materials: item.materials,
+  })),
+}));
