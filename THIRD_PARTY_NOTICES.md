@@ -18,6 +18,9 @@ versioned records in `src/game-data/catalog.ts`.
 
 ## Community implementations consulted
 
+- **Milkonomy** — `https://github.com/Polokikiki/Milkonomy`. Its bounded retry and cached-market
+  behavior were reviewed when improving collection resilience. This project independently implements
+  server-side snapshot collection and deliberately does not merge missing quotes with older data.
 - **MWI Tools** — `https://github.com/holychikenz/MWIApi` (repository name and URL retained here for
   provenance). Its public calculator was used only as an independent behavioral comparison; no code
   was copied.

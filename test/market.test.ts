@@ -52,3 +52,40 @@ test('collector stores gzip snapshots atomically and deduplicates timestamps', a
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('collector retries transient failures and eventually stores the snapshot', async () => {
+  const directory = join(tmpdir(), `mwi-market-retry-${process.pid}-${Date.now()}`);
+  const store = new SnapshotStore(directory);
+  let attempts = 0;
+  const fetcher: typeof fetch = async () => {
+    attempts += 1;
+    if (attempts === 1) return new Response(null, { status: 503 });
+    if (attempts === 2) throw new TypeError('temporary network failure');
+    return new Response(JSON.stringify(fixture), { status: 200 });
+  };
+  try {
+    const result = await collectSnapshot({ store, fetcher, retryDelayMs: 0 });
+    assert.equal(result.stored, true);
+    assert.equal(attempts, 3);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('collector does not retry permanent HTTP or payload errors', async () => {
+  const store = new SnapshotStore(join(tmpdir(), `mwi-market-invalid-${process.pid}-${Date.now()}`));
+  let attempts = 0;
+  const notFound: typeof fetch = async () => {
+    attempts += 1;
+    return new Response(null, { status: 404 });
+  };
+  await assert.rejects(collectSnapshot({ store, fetcher: notFound, retryDelayMs: 0 }), /HTTP 404/);
+  assert.equal(attempts, 1);
+
+  const invalidJson: typeof fetch = async () => {
+    attempts += 1;
+    return new Response('{');
+  };
+  await assert.rejects(collectSnapshot({ store, fetcher: invalidJson, retryDelayMs: 0 }), /not valid JSON/);
+  assert.equal(attempts, 2);
+});
