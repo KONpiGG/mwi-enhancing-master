@@ -1,12 +1,14 @@
 const $ = id => document.getElementById(id);
-let allRows = [], marketItems = [], catalogItems = [];
+let allRows = [], marketItems = [], catalogItems = [], presetOptions = [];
 const number = id => $(id).value === '' ? null : Number($(id).value);
 const money = n => n == null ? '—' : n.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+const icon = hrid => `<svg class="item-icon" aria-hidden="true"><use href="items.svg#${hrid.split('/').at(-1)}"></use></svg>`;
 
 async function load() {
   $('status').textContent = '正在计算…';
-  const ids = ['player', 'levelBonus', 'equipmentSuccess', 'communitySuccess', 'achievementSuccess', 'shrineSuccess', 'experienceBonus'];
-  const q = new URLSearchParams(Object.fromEntries(ids.map(id => [id === 'player' ? 'playerLevel' : id, number(id) ?? 0])));
+  const q = new URLSearchParams({ playerLevel: number('player') ?? 0 });
+  const equipment = {}; document.querySelectorAll('.slot-select').forEach(select => { if (select.value) equipment[select.dataset.slot] = { hrid: select.value, enhanceLevel: Number($(`level-${select.dataset.slot}`).value) }; });
+  q.set('equipment', JSON.stringify(equipment)); q.set('teas', [...document.querySelectorAll('[name=tea]:checked')].map(x => x.value).join(','));
   q.set('feeRate', (number('fee') ?? 0) / 100);
   const response = await fetch(`/api/rankings?${q}`, { cache: 'no-store' });
   const data = await response.json();
@@ -14,12 +16,21 @@ async function load() {
   allRows = data.rows;
   marketItems = data.marketItems ?? [];
   catalogItems = data.catalogItems ?? [];
+  presetOptions = data.presetOptions ?? presetOptions; populatePreset();
   populateItems();
   renderMarket();
   $('status').textContent = data.timestamp
     ? `市场快照：${new Date(data.timestamp).toLocaleString()}；收到 ${data.marketItemCount} 种物品、${data.quoteCount} 条报价；目录 ${data.catalogSize} 件；可计算项目 ${data.rows.length} 个。`
     : data.message;
+  if (data.profile) $('buffSummary').textContent = `当前推导：有效强化等级 ${data.profile.playerLevel}｜成功率加成 ${(data.profile.success*100).toFixed(2)}%｜跳级率 ${(data.profile.blessed*100).toFixed(2)}%｜经验加成 ${(data.profile.experience*100).toFixed(2)}%｜装备/饮品速度 ${(data.profile.speed*100).toFixed(2)}%`;
   render();
+}
+
+function populatePreset() {
+  if ($('equipmentSlots').children.length || !presetOptions.length) return;
+  const labels = {tool:'强化器',charm:'强化护符',hands:'手部',body:'上衣',legs:'下装',back:'背部',neck:'项链'};
+  $('equipmentSlots').innerHTML = Object.entries(labels).map(([slot,label]) => `<label>${label}<span><select class="slot-select" data-slot="${slot}"><option value="">未装备</option>${presetOptions.filter(x=>x.slot===slot).map(x=>`<option value="${x.hrid}">${x.name}</option>`).join('')}</select><select id="level-${slot}" class="enhance-level">${Array.from({length:21},(_,i)=>`<option value="${i}">+${i}</option>`).join('')}</select></span></label>`).join('');
+  document.querySelectorAll('.slot-select,.enhance-level').forEach(el => el.addEventListener('change', () => load().catch(show)));
 }
 
 function populateItems() {
@@ -34,11 +45,11 @@ function populateItems() {
 function render() {
   const selectedItem = $('item').value;
   let rows = allRows.filter(r => (!selectedItem || r.itemHrid === selectedItem) && r.totalExperience >= (number('minXp') ?? 0) &&
-    r.volume >= (number('minVolume') ?? 0) && r.fromLevel >= (number('minLevel') ?? 0) && r.toLevel <= (number('maxLevel') ?? Infinity) &&
+    r.volume >= (number('minVolume') ?? 0) &&
     (number('maxLoss') == null || r.profit >= -number('maxLoss')) && (number('maxCapital') == null || r.capitalRequired <= number('maxCapital')));
   const sort = $('sort').value;
   rows.sort((a, b) => sort === 'profit' ? b.profit - a.profit : sort === 'loss' ? Math.abs(Math.min(0, a.profit)) - Math.abs(Math.min(0, b.profit)) : sort === 'costPerExperience' ? a.costPerExperience - b.costPerExperience : b[sort] - a[sort]);
-  $('rows').innerHTML = rows.map(r => `<tr data-id="${r.id}"><td>${r.itemName} +${r.fromLevel} → +${r.toLevel}</td><td>${(r.bestStrategy.steps.at(-1).successRate * 100).toFixed(1)}%</td><td>${money(r.expectedAttempts)}</td><td>${money(r.totalExperience)}</td><td>${money(r.capitalRequired)}</td><td>${money(r.grossSaleRevenue-r.capitalRequired)}</td><td>${money(r.saleRevenue)}</td><td class="${r.profit >= 0 ? 'gain' : 'loss'}">${money(r.profit)}</td><td>${money(r.costPerExperience)}</td><td>${money(r.capitalRequired)}</td><td>${money(r.volume)}</td><td>${(r.spread * 100).toFixed(1)}%</td><td class="risk">${r.risks.join('、') || '—'}</td></tr>`).join('') || '<tr><td colspan="13">没有可计算的强化项目。可切换到“市场报价”查看已采集的原始行情，或放宽强化区间与筛选条件。</td></tr>';
+  $('rows').innerHTML = rows.map(r => `<tr data-id="${r.id}"><td class="item-cell">${icon(r.itemHrid)}<span>${r.itemName} +${r.fromLevel} → +${r.toLevel}</span></td><td>${(r.bestStrategy.steps.at(-1).successRate * 100).toFixed(1)}%</td><td>${money(r.expectedAttempts)}</td><td>${money(r.totalExperience)}</td><td>${money(r.capitalRequired)}</td><td>${money(r.grossSaleRevenue-r.capitalRequired)}</td><td>${money(r.saleRevenue)}</td><td class="${r.profit >= 0 ? 'gain' : 'loss'}">${money(r.profit)}</td><td>${money(r.costPerExperience)}</td><td>${money(r.capitalRequired)}</td><td>${money(r.volume)}</td><td>${(r.spread * 100).toFixed(1)}%</td><td class="risk">${r.risks.join('、') || '—'}</td></tr>`).join('') || '<tr><td colspan="13">没有可计算的强化项目。可切换到“市场报价”查看已采集的原始行情，或放宽强化区间与筛选条件。</td></tr>';
   document.querySelectorAll('tbody tr[data-id]').forEach(tr => tr.onclick = () => detail(allRows.find(r => r.id === tr.dataset.id)));
 }
 
@@ -46,7 +57,7 @@ function renderMarket() {
   const query = $('marketSearch').value.trim().toLocaleLowerCase();
   const rows = marketItems.filter(q => `${q.itemName} ${q.itemHrid}`.toLocaleLowerCase().includes(query));
   $('marketSummary').textContent = `显示 ${rows.length} / ${marketItems.length} 条报价`;
-  $('marketRows').innerHTML = rows.slice(0, 1000).map(q => `<tr><td>${q.itemName}<small>${q.itemHrid}</small></td><td>+${q.enhancementLevel}</td><td>${money(q.ask)}</td><td>${money(q.bid)}</td><td>${money(q.hourlyAverage)}</td><td>${money(q.hourlyVolume)}</td></tr>`).join('') || '<tr><td colspan="6">暂无市场报价</td></tr>';
+  $('marketRows').innerHTML = rows.slice(0, 1000).map(q => `<tr><td class="item-cell">${icon(q.itemHrid)}<span>${q.itemName}<small>${q.itemHrid}</small></span></td><td>+${q.enhancementLevel}</td><td>${money(q.ask)}</td><td>${money(q.bid)}</td><td>${money(q.hourlyAverage)}</td><td>${money(q.hourlyVolume)}</td></tr>`).join('') || '<tr><td colspan="6">暂无市场报价</td></tr>';
 }
 
 function detail(r) {
@@ -59,9 +70,10 @@ document.querySelectorAll('.tab').forEach(tab => tab.onclick = () => {
   document.querySelectorAll('.tab').forEach(button => button.classList.toggle('active', button === tab));
   document.querySelectorAll('.panel').forEach(panel => panel.hidden = panel.id !== tab.dataset.panel);
 });
-const profileIds = ['player', 'levelBonus', 'equipmentSuccess', 'communitySuccess', 'achievementSuccess', 'shrineSuccess', 'experienceBonus', 'fee'];
+const profileIds = ['player', 'fee'];
 document.querySelectorAll('#projects input,#projects select').forEach(el => el.addEventListener('change', profileIds.includes(el.id) ? () => load().catch(show) : render));
 $('marketSearch').addEventListener('input', renderMarket);
+document.querySelectorAll('[name=tea]').forEach(el => el.addEventListener('change', () => load().catch(show)));
 $('update').onclick = async () => { try { $('update').disabled = true; $('status').textContent = '正在获取官方小时快照…'; const r = await fetch('/api/market/update', { method: 'POST' }); const d = await r.json(); if (!r.ok) throw Error(d.error); await load(); } catch (e) { show(e); } finally { $('update').disabled = false; } };
 function show(e) { $('status').textContent = `错误：${e.message}`; }
 load().catch(show);
