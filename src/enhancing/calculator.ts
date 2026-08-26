@@ -138,7 +138,12 @@ function random(seed: number) { let state=seed||1; return () => { state=(state+0
 function quantile(sorted: number[], p: number) { return sorted[Math.floor((sorted.length-1)*p)]!; }
 function simulateRisk(strategy: EnhancementStrategyResult, origin: number, target: number, baseCost: number, revenue: number, fee: number, runs: number, seed: number) {
   const rng=random(seed), profits:number[]=[]; let losses=0;
-  for(let run=0;run<runs;run++) { let level=origin,cost=baseCost+fee,guard=0; while(level<target) { if(++guard>1_000_000) throw new Error('risk simulation did not converge'); const step=strategy.steps[level]!; cost+=step.materialCost/step.attempts; const roll=rng(); if(roll<step.normalUpRate) level++; else if(roll<step.normalUpRate+step.leapUpRate) level+=2; else { if(level>=strategy.protectLevel) { cost+=strategy.protectionCost/strategy.expectedProtections; level--; } else level=0; } } const profit=revenue-cost; profits.push(profit); if(profit<0)losses++; }
+  for(let run=0;run<runs;run++) { let level=origin,cost=baseCost+fee; while(level<target) { const step=strategy.steps[level]!; const attemptCost=step.materialCost/step.attempts;
+      // A failure at +0 returns to +0. Sampling that geometric run in one go is
+      // exact, and prevents low-success items from doing millions of identical
+      // loop iterations (and previously aborting the whole market response).
+      if(level===0 && step.failureRate>0) { const failures=Math.floor(Math.log1p(-rng())/Math.log(step.failureRate)); cost+=(failures+1)*attemptCost; const successfulRoll=rng()*step.successRate; level+=successfulRoll<step.normalUpRate?1:2; continue; }
+      cost+=attemptCost; const roll=rng(); if(roll<step.normalUpRate) level++; else if(roll<step.normalUpRate+step.leapUpRate) level+=2; else { if(level>=strategy.protectLevel) { cost+=strategy.protectionCost/strategy.expectedProtections; level--; } else level=0; } } const profit=revenue-cost; profits.push(profit); if(profit<0)losses++; }
   profits.sort((a,b)=>a-b); return {lossProbability:losses/runs,p10:quantile(profits,.1),p50:quantile(profits,.5),p90:quantile(profits,.9)};
 }
 function riskLevel(score:number) { return score<=20?'很低':score<=40?'低':score<=60?'中':score<=80?'高':'很高'; }

@@ -71,6 +71,16 @@ test('ranking exposes unified cost, hourly profit, experience efficiency and sim
   assert.equal(row.simulationRuns, 10_000); assert.ok(row.lossProbability >= 0 && row.lossProbability <= 1); assert.ok(row.profitP10 <= row.profitP50 && row.profitP50 <= row.profitP90);
   assert.equal(row.recent72hVolume, null);
 });
+test('risk simulation efficiently samples very long level-zero failure streaks', () => {
+  const difficult: EnhanceableItem = { itemHrid: '/items/difficult', name: 'Difficult', itemLevel: 100, steps: [{ toLevel: 1, baseSuccessRate: .000001, experience: 0, materials: [{ itemHrid: '/items/dust', quantity: 1 }] }] };
+  const difficultSnapshot: MarketSnapshot = { timestamp: snapshot.timestamp, quotes: [
+    { itemHrid: difficult.itemHrid, enhancementLevel: 0, ask: 100, bid: 90, hourlyAverage: 100, hourlyVolume: 20 },
+    { itemHrid: difficult.itemHrid, enhancementLevel: 1, ask: 200, bid: 180, hourlyAverage: 190, hourlyVolume: 20 },
+    snapshot.quotes.find(q => q.itemHrid === '/items/dust')!,
+  ] };
+  const [row] = calculateRankings(difficultSnapshot, [difficult], { ...buffs, playerLevel: 1 }, new Date(difficultSnapshot.timestamp));
+  assert.equal(row!.simulationRuns, 10_000); assert.ok(Number.isFinite(row!.profitP10)); assert.ok(row!.profitP10 <= row!.profitP50 && row!.profitP50 <= row!.profitP90);
+});
 test('losses stay negative and zero-duration rates stay unavailable', () => {
   const poor = structuredClone(snapshot); poor.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === 1)!.bid = 1;
   const loss = calculateRankings(poor, [item], buffs, new Date(poor.timestamp), .05, 0, 10).find(r => r.fromLevel === 0 && r.toLevel === 1)!;
