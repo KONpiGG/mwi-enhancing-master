@@ -17,8 +17,15 @@ createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
     if (url.pathname === '/api/market/update' && request.method === 'POST') {
-      const result = await collectSnapshot({ store });
+      const result = await collectSnapshot({ store, timeoutMs: 12_000, maxAttempts: 1 });
       return json(response, 200, result);
+    }
+    if (url.pathname === '/api/market') {
+      const snapshot = await store.latest();
+      if (!snapshot) return json(response, 200, { timestamp: null, marketItems: [], message: '还没有市场快照，请点击“更新市场数据”。' });
+      const names = new Map(enhanceableItems.map(item => [item.itemHrid, item.name]));
+      const marketItems = snapshot.quotes.map(quote => ({ ...quote, itemName: names.get(quote.itemHrid) ?? quote.itemHrid.split('/').at(-1)!.replaceAll('_', ' ') }));
+      return json(response, 200, { timestamp: snapshot.timestamp, marketItems });
     }
     if (url.pathname === '/api/rankings') {
       const level = Number(url.searchParams.get('playerLevel') ?? 0);
