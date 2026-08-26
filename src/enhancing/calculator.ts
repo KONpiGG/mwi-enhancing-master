@@ -11,12 +11,27 @@ export interface RankingRow {
   steps: Array<{ toLevel: number; successRate: number; attempts: number; experience: number; inputCost: number; materialCost: number }>;
 }
 
+export interface PlayerProfile {
+  level: number;
+  levelBonus?: number;
+  equipmentSuccessBonus?: number;
+  communitySuccessBonus?: number;
+  achievementSuccessBonus?: number;
+  shrineSuccessBonus?: number;
+  experienceBonus?: number;
+}
+
 const quoteKey = (hrid: string, level: number) => `${hrid}\0${level}`;
 
 /** Exact expected-value recurrence for destructive failures. */
-export function calculateRankings(snapshot: MarketSnapshot, items: ReadonlyArray<EnhanceableItem>, playerLevel: number, now = new Date(), marketFeeRate = 0): RankingRow[] {
+export function calculateRankings(snapshot: MarketSnapshot, items: ReadonlyArray<EnhanceableItem>, player: number | PlayerProfile, now = new Date(), marketFeeRate = 0): RankingRow[] {
   if (marketFeeRate < 0 || marketFeeRate >= 1) throw new RangeError('market fee rate must be in [0, 1)');
   const quotes = new Map(snapshot.quotes.map(q => [quoteKey(q.itemHrid, q.enhancementLevel), q]));
+  const profile: PlayerProfile = typeof player === 'number' ? { level: player } : player;
+  const effectiveLevel = profile.level + (profile.levelBonus ?? 0);
+  const configuredSuccessBonus = (profile.equipmentSuccessBonus ?? 0) + (profile.communitySuccessBonus ?? 0) +
+    (profile.achievementSuccessBonus ?? 0) + (profile.shrineSuccessBonus ?? 0);
+  const experienceMultiplier = 1 + (profile.experienceBonus ?? 0);
   const rows: RankingRow[] = [];
   for (const item of items) {
     for (let from = 0; from < item.steps.length; from++) {
@@ -33,25 +48,30 @@ export function calculateRankings(snapshot: MarketSnapshot, items: ReadonlyArray
         const requiredAttempts = new Map<number, number>();
         for (let index = selectedSteps.length - 1, requiredOutputs = 1; index >= 0; index--) {
           const step = selectedSteps[index]!;
-          const successRate = Math.min(1, step.baseSuccessRate + playerLevel / 1000);
+          const itemLevel = item.itemLevel ?? 0;
+          const levelRatio = effectiveLevel >= itemLevel ? (effectiveLevel - itemLevel) * 0.0005 : -0.5 * (1 - effectiveLevel / itemLevel);
+          const successRate = Math.max(0.000001, Math.min(1, step.baseSuccessRate * (1 + levelRatio + configuredSuccessBonus)));
           const attempts = requiredOutputs / successRate;
           requiredAttempts.set(step.toLevel, attempts);
           requiredOutputs = attempts;
         }
         expectedInputUnits = requiredAttempts.get(selectedSteps[0]!.toLevel)!;
         for (const step of selectedSteps) {
-          const successRate = Math.min(1, step.baseSuccessRate + playerLevel / 1000);
+          const itemLevel = item.itemLevel ?? 0;
+          const levelRatio = effectiveLevel >= itemLevel ? (effectiveLevel - itemLevel) * 0.0005 : -0.5 * (1 - effectiveLevel / itemLevel);
+          const successRate = Math.max(0.000001, Math.min(1, step.baseSuccessRate * (1 + levelRatio + configuredSuccessBonus)));
           const attempts = requiredAttempts.get(step.toLevel)!;
           let stepMaterials = 0;
           for (const material of step.materials) {
             const materialQuote = quotes.get(quoteKey(material.itemHrid, 0));
-            if (materialQuote?.ask == null) { valid = false; break; }
-            stepMaterials += attempts * material.quantity * materialQuote.ask;
+            const materialPrice = material.itemHrid === '/items/coin' ? 1 : materialQuote?.ask;
+            if (materialPrice == null) { valid = false; break; }
+            stepMaterials += attempts * material.quantity * materialPrice;
           }
           if (!valid) break;
-          totalExperience += attempts * step.experience;
+          totalExperience += attempts * step.experience * experienceMultiplier;
           materialCost += stepMaterials;
-          details.push({ toLevel: step.toLevel, successRate, attempts, experience: attempts * step.experience, inputCost: expectedInputUnits * buy.ask, materialCost: stepMaterials });
+          details.push({ toLevel: step.toLevel, successRate, attempts, experience: attempts * step.experience * experienceMultiplier, inputCost: expectedInputUnits * buy.ask, materialCost: stepMaterials });
         }
         if (!valid) continue;
         const purchaseCost = expectedInputUnits * buy.ask;

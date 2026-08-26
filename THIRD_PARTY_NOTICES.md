@@ -1,6 +1,6 @@
 # Third-party data and implementation notices
 
-This repository does not copy third-party program code. The expected-value implementation in
+The expected-value implementation in
 `src/enhancing/calculator.ts` was written for this project and is intentionally separate from the
 versioned records in `src/game-data/catalog.ts`.
 
@@ -18,9 +18,11 @@ versioned records in `src/game-data/catalog.ts`.
 
 ## Community implementations consulted
 
-- **Milkonomy** — `https://github.com/Polokikiki/Milkonomy`. Its bounded retry and cached-market
-  behavior were reviewed when improving collection resilience. This project independently implements
-  server-side snapshot collection and deliberately does not merge missing quotes with older data.
+- **Milkonomy** — `https://github.com/Polokikiki/Milkonomy` (MIT, copyright 2025 luyuhao). The
+  `v1.20260309.0` public game-data export supplies the generated enhanceable-item catalog, material
+  costs, item levels and success-rate table. Its player-level success-ratio behavior is reproduced
+  with attribution; server-side snapshot collection remains independent and never merges missing
+  quotes with older data.
 - **MWI Tools** — `https://github.com/holychikenz/MWIApi` (repository name and URL retained here for
   provenance). Its public calculator was used only as an independent behavioral comparison; no code
   was copied.

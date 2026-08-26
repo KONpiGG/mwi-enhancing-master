@@ -25,7 +25,16 @@ createServer(async (request, response) => {
       if (!Number.isFinite(feeRate) || feeRate < 0 || feeRate >= 1) return json(response, 400, { error: '市场手续费率必须在 0（含）到 1（不含）之间' });
       const snapshot = await store.latest();
       if (!snapshot) return json(response, 200, { timestamp: null, rows: [], message: '还没有市场快照，请点击“更新市场数据”。' });
-      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, rows: calculateRankings(snapshot, enhanceableItems, level, new Date(), feeRate) });
+      const percent = (name: string) => Number(url.searchParams.get(name) ?? 0) / 100;
+      const profile = {
+        level,
+        levelBonus: Number(url.searchParams.get('levelBonus') ?? 0),
+        equipmentSuccessBonus: percent('equipmentSuccess'), communitySuccessBonus: percent('communitySuccess'),
+        achievementSuccessBonus: percent('achievementSuccess'), shrineSuccessBonus: percent('shrineSuccess'),
+        experienceBonus: percent('experienceBonus'),
+      };
+      if (Object.values(profile).some(value => !Number.isFinite(value))) return json(response, 400, { error: '玩家加成必须是有效数字' });
+      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, catalogSize: enhanceableItems.length, rows: calculateRankings(snapshot, enhanceableItems, profile, new Date(), feeRate) });
     }
     const path = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     if (!/^[\w.-]+$/.test(path)) return json(response, 404, { error: 'not found' });

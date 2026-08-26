@@ -27,11 +27,20 @@ test('computes a profitable case with conservative ask/bid and material breakdow
   assert.ok(row.risks.includes('低成交量'));
 });
 
-test('computes a loss and applies player skill to each explicit base chance', () => {
+test('applies the Milkonomy multiplicative player-level success ratio', () => {
   const row = calculateRankings(snapshot, items, 100, new Date(snapshot.timestamp)).find(r => r.fromLevel === 1 && r.toLevel === 2)!;
-  assert.equal(row.successRate, 0.35);
-  assert.ok(Math.abs(row.purchaseCost - 742.8571428571429) < 1e-9);
-  assert.ok(Math.abs(row.profit + 242.8571428571429) < 1e-9);
+  assert.equal(row.successRate, 0.2625);
+  assert.ok(Math.abs(row.purchaseCost - 990.4761904761905) < 1e-9);
+  assert.ok(Math.abs(row.profit + 490.4761904761905) < 1e-9);
+});
+
+test('combines equipment, community, achievement, shrine and experience buffs', () => {
+  const row = calculateRankings(snapshot, items, {
+    level: 0, equipmentSuccessBonus: 0.02, communitySuccessBonus: 0.03,
+    achievementSuccessBonus: 0.04, shrineSuccessBonus: 0.01, experienceBonus: 0.2,
+  }, new Date(snapshot.timestamp)).find(r => r.fromLevel === 0 && r.toLevel === 1)!;
+  assert.equal(row.successRate, 0.55);
+  assert.ok(Math.abs(row.totalExperience - (10 / 0.55 * 1.2)) < 1e-9);
 });
 
 test('excludes projects with either side of the required quote missing', () => {
