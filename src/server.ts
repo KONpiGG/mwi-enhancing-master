@@ -11,7 +11,7 @@ import { SnapshotStore } from './market/store.js';
 const port = Number(process.env.PORT ?? 3000);
 const store = new SnapshotStore(process.env.MWI_DATA_DIR ?? 'data');
 const publicDir = join(import.meta.dirname, 'web');
-const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const WEB_PROJECT_LIMIT = 250;
 const rankingCache = new Map<string, ReturnType<typeof calculateRankings>>();
 
