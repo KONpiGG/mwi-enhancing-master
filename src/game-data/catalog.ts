@@ -1,4 +1,5 @@
 import { sourceItems, successRates } from './generated-catalog.js';
+import { chineseItemNames } from './item-translations.js';
 
 export const GAME_DATA_VERSION = 'milkonomy-game-data-v1.20260309.0';
 export const FORMULA_VERSION = 'milkonomy-markov-v1-febe90f';
@@ -22,7 +23,8 @@ export interface EnhanceableItem {
 /** Tradable enhanceable items exported by Milkonomy from MWI game data. */
 export const enhanceableItems: ReadonlyArray<EnhanceableItem> = sourceItems.map(item => ({
   itemHrid: item.itemHrid,
-  name: item.name,
+  name: chineseItemNames[item.itemHrid] ?? item.name,
+  englishName: item.name,
   itemLevel: item.itemLevel,
   steps: successRates.map((baseSuccessRate, index) => ({
     toLevel: index + 1,
