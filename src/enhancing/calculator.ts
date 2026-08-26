@@ -120,10 +120,24 @@ export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protect
 }
 
 /** Shared project set; profit and training views only sort/filter these rows differently. */
-export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12): RankingRow[] {
+export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12, projectLimit = Infinity): RankingRow[] {
   const resolved = typeof buffs === 'number' ? { playerLevel: buffs, success: 0, blessed: 0, experience: 0, speed: 0 } : buffs; const rows: RankingRow[] = []; const quotes = quoteIndex(snapshot);
+  // A complete catalog can contain more than 100,000 quoted level pairs. Ranking
+  // all of them (including 1,000 risk runs apiece) ties up the single Node event
+  // loop for minutes. The web endpoint supplies a limit; prioritize liquid pairs
+  // with a promising price gap before doing any matrix solves or simulations.
+  const candidates: { item: EnhanceableItem; originLevel: number; targetLevel: number; priority: number }[] = [];
   for (const item of items) for (let originLevel = 0; originLevel < item.steps.length; originLevel++) for (let targetLevel = originLevel + 1; targetLevel <= item.steps.length; targetLevel++) {
-    const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel)); if (buy?.ask == null || sell?.bid == null) continue;
+    const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel));
+    if (buy?.ask == null || sell?.bid == null) continue;
+    const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume);
+    const priceGap = (sell.bid - buy.ask) / Math.max(1, buy.ask);
+    const complexityPenalty = targetLevel * .5 + (targetLevel - originLevel) * .25;
+    candidates.push({ item, originLevel, targetLevel, priority: Math.log1p(Math.max(0, volume)) * 10 + Math.log1p(Math.max(0, priceGap)) * 2 - complexityPenalty });
+  }
+  if (candidates.length > projectLimit) candidates.sort((a, b) => b.priority - a.priority).length = projectLimit;
+  for (const { item, originLevel, targetLevel } of candidates) {
+    const buy = quotes.get(key(item.itemHrid, originLevel))!; const sell = quotes.get(key(item.itemHrid, targetLevel))!;
     const evaluation = evaluateProtectionStrategies({ snapshot, item, originLevel, targetLevel, buffs: resolved, marketFeeRate, actionSeconds }); if (!evaluation) continue;
     const b = evaluation.bestStrategy;
     const midpoint = (buy.ask! + (buy.bid ?? buy.ask!)) / 2; const spread = midpoint ? (buy.ask! - (buy.bid ?? buy.ask!)) / midpoint : 0; const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume); const risks: string[] = [];

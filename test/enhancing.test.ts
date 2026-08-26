@@ -93,6 +93,11 @@ test('rankings enumerate every quoted origin and target pair', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp));
   assert.equal(rows.length, 28); assert.ok(rows.some(row => row.fromLevel === 3 && row.toLevel === 5)); assert.ok(rows.some(row => row.fromLevel === 4 && row.toLevel === 7));
 });
+test('ranking limit bounds expensive matrix and risk calculations', () => {
+  const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12, 5);
+  assert.equal(rows.length, 5);
+  assert.ok(rows.every(row => row.simulationRuns === 1_000));
+});
 test('profit and training rankings reuse the identical best strategy objects', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp)); const profit = rankProfitProjects(rows); const training = rankTrainingProjects(rows);
   for (const row of profit) assert.equal(training.find(x => x.id === row.id)!.bestStrategy, row.bestStrategy);
