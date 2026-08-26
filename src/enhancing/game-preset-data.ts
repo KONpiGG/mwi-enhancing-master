@@ -10,5 +10,15 @@ export const presetOptions: PresetOption[] = equipmentRows.map(([hrid,name,slot]
 export const presetGameData: PresetGameData = {
   equipment: Object.fromEntries(equipmentRows.map(([h,, , buffs]) => [h, buffs.map(([attribute,value,enhancementBonus]) => ({attribute,value,enhancementBonus}))])),
   consumables: { '/items/enhancing_tea': [{attribute:'Speed',value:.02}], '/items/super_enhancing_tea': [{attribute:'Speed',value:.04}], '/items/ultra_enhancing_tea': [{attribute:'Speed',value:.06}], '/items/blessed_tea': [{attribute:'Blessed',value:.01}], '/items/wisdom_tea': [{attribute:'Experience',value:.12}] },
-  seals: {}, communityBuffs: {}, achievements: {}, shrines: {}, enhancementLevelTotalBonusMultiplierTable: [0,1,2.1,3.3,4.6,6,7.5,9.1,10.8,12.6,14.5,16.7,19.2,22,25.1,28.5,32.2,36.2,40.5,45.1,50]
+  seals: {},
+  communityBuffs: {
+    '/community_buff_types/moo_card': [{attribute:'Experience',value:.05}],
+    '/community_buff_types/experience': [{attribute:'Experience',value:.2,perEnhanceLevel:.005,levelMode:'base-plus'}],
+    '/community_buff_types/enhancing_speed': [{attribute:'Speed',value:.2,perEnhanceLevel:.005,levelMode:'base-plus'}]
+  },
+  achievements: {
+    '/achievement_tiers/beginner': [], '/achievement_tiers/novice': [{attribute:'Experience',value:.02}],
+    '/achievement_tiers/adept': [], '/achievement_tiers/veteran': [], '/achievement_tiers/champion': [{attribute:'Success',value:.002}]
+  },
+  shrines: {}, enhancementLevelTotalBonusMultiplierTable: [0,1,2.1,3.3,4.6,6,7.5,9.1,10.8,12.6,14.5,16.7,19.2,22,25.1,28.5,32.2,36.2,40.5,45.1,50]
 };

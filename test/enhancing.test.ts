@@ -50,6 +50,15 @@ test('preset equipment levels and every source derive only declared attributes',
   const data: PresetGameData = { equipment: { tool: [{ attribute: 'Success', value: .1 }] }, consumables: { tea: [{ attribute: 'Speed', value: .1 }] }, seals: { seal: [{ attribute: 'Blessed', value: .01 }] }, communityBuffs: { community: [{ attribute: 'Success', value: .02 }] }, achievements: { achievement: [{ attribute: 'Experience', value: .2 }] }, shrines: { shrine: [{ attribute: 'Experience', value: .01 }] }, enhancementLevelTotalBonusMultiplierTable: [1, 2] };
   const result = deriveEnhancingBuffs(preset, data); assert.ok(Math.abs(result.success - .14) < 1e-12); assert.deepEqual({ ...result, success: .14 }, { playerLevel: 50, success: .14, blessed: .01, experience: .23, speed: .1 });
 });
+test('reference community and achievement buffs use their official enhancement factors', () => {
+  const preset: EnhancingPreset = { id: 'p', name: 'p', enhancing: { playerLevel: 100, tool: {}, charm: {}, teas: [] }, specialEquipment: { hands: {}, body: {}, legs: {}, back: {}, neck: {}, earrings: {}, ring: {}, pouch: {} }, seals: [], communityBuffs: { speed: { hrid: 'speed', level: 3 }, moo: { hrid: 'moo', level: 1 } }, achievementBuffs: { champion: { enabled: true } }, shrines: {} };
+  const data: PresetGameData = { equipment: {}, consumables: {}, seals: {}, communityBuffs: { speed: [{ attribute: 'Speed', value: .2, perEnhanceLevel: .005, levelMode: 'base-plus' }], moo: [{ attribute: 'Experience', value: .05 }] }, achievements: { champion: [{ attribute: 'Success', value: .002 }] }, shrines: {} };
+  const result = deriveEnhancingBuffs(preset, data); assert.deepEqual({ ...result, speed: Number(result.speed.toFixed(3)) }, { playerLevel: 100, success: .002, blessed: 0, experience: .05, speed: .21 });
+});
+test('ranking exposes time, labor, experience rate and Markov attempt variance', () => {
+  const row = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp), .05, 360, 10)[0]!;
+  assert.equal(row.laborCost, row.expectedTime / 10); assert.ok(row.expectedTime > 0); assert.ok(row.experiencePerHour > 0); assert.ok(row.attemptVariance >= 0);
+});
 test('rankings enumerate every quoted origin and target pair', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp));
   assert.equal(rows.length, 28); assert.ok(rows.some(row => row.fromLevel === 3 && row.toLevel === 5)); assert.ok(rows.some(row => row.fromLevel === 4 && row.toLevel === 7));

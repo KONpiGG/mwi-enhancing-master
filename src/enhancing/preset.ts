@@ -7,7 +7,7 @@ export interface EnhancingPreset {
   achievementBuffs: Record<string, { enabled: boolean }>; shrines: Record<string, { level: number }>;
 }
 export type EnhancingAttribute = 'Success' | 'Blessed' | 'Experience' | 'Speed';
-export interface BuffRecord { attribute: EnhancingAttribute; value: number; enhancementBonus?: number; perEnhanceLevel?: number }
+export interface BuffRecord { attribute: EnhancingAttribute; value: number; enhancementBonus?: number; perEnhanceLevel?: number; levelMode?: 'base-plus' }
 export interface PresetGameData {
   equipment: Record<string, readonly BuffRecord[]>; consumables: Record<string, readonly BuffRecord[]>; seals: Record<string, readonly BuffRecord[]>;
   communityBuffs: Record<string, readonly BuffRecord[]>; achievements: Record<string, readonly BuffRecord[]>; shrines: Record<string, readonly BuffRecord[]>;
@@ -19,7 +19,8 @@ export function deriveEnhancingBuffs(preset: EnhancingPreset, data: PresetGameDa
   const result: EnhancingBuffs = { playerLevel: preset.enhancing.playerLevel, success: 0, blessed: 0, experience: 0, speed: 0 };
   const add = (records: readonly BuffRecord[] | undefined, level = 0, equipment = false) => { for (const buff of records ?? []) {
     const multiplier = equipment ? (data.enhancementLevelTotalBonusMultiplierTable?.[level] ?? 0) : level || 1;
-    result[buff.attribute.toLowerCase() as 'success' | 'blessed' | 'experience' | 'speed'] += (equipment ? buff.value + (buff.enhancementBonus ?? 0) * multiplier : buff.value * multiplier) + (buff.perEnhanceLevel ?? 0) * level;
+    const scaled = buff.levelMode === 'base-plus' ? (level > 0 ? buff.value + (buff.perEnhanceLevel ?? 0) * (level - 1) : 0) : buff.value * multiplier + (buff.perEnhanceLevel ?? 0) * level;
+    result[buff.attribute.toLowerCase() as 'success' | 'blessed' | 'experience' | 'speed'] += equipment ? buff.value + (buff.enhancementBonus ?? 0) * multiplier : scaled;
   } };
   const equipment = [preset.enhancing.tool, preset.enhancing.charm, ...Object.values(preset.specialEquipment)];
   for (const selection of equipment) if (selection.hrid) add(data.equipment[selection.hrid], selection.enhanceLevel ?? 0, true);
