@@ -61,9 +61,23 @@ test('preset equipment options cover every requested slot with Chinese names', (
   assert.ok(presetOptions.every(option => /[\u3400-\u9fff]/u.test(option.name)));
   assert.ok(presetOptions.some(option => option.hrid === '/items/philosophers_earrings' && option.name === '贤者耳环'));
 });
-test('ranking exposes time, labor, experience rate and Markov attempt variance', () => {
-  const row = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp), .05, 360, 10)[0]!;
-  assert.equal(row.laborCost, row.expectedTime / 10); assert.ok(row.expectedTime > 0); assert.ok(row.experiencePerHour > 0); assert.ok(row.attemptVariance >= 0);
+test('ranking exposes unified cost, hourly profit, experience efficiency and simulated risk', () => {
+  const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp), .05, 0, 10); const row = rows[0]!;
+  assert.equal(row.totalCost, row.purchaseCost + row.materialCost + row.protectionCost + row.marketFee);
+  assert.equal(row.profit, row.grossSaleRevenue - row.totalCost);
+  assert.equal(row.hourlyProfit, row.profit * 3600 / row.expectedTime);
+  assert.ok(row.expectedAttempts > row.toLevel-row.fromLevel); assert.ok(row.expectedTime > 0);
+  assert.ok(row.experiencePerHour! > 0); assert.ok(row.experiencePerGold! > 0); assert.ok(row.experienceEfficiency! >= 0 && row.experienceEfficiency! <= 100);
+  assert.equal(row.simulationRuns, 10_000); assert.ok(row.lossProbability >= 0 && row.lossProbability <= 1); assert.ok(row.profitP10 <= row.profitP50 && row.profitP50 <= row.profitP90);
+  assert.equal(row.recent72hVolume, null);
+});
+test('losses stay negative and zero-duration rates stay unavailable', () => {
+  const poor = structuredClone(snapshot); poor.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === 1)!.bid = 1;
+  const loss = calculateRankings(poor, [item], buffs, new Date(poor.timestamp), .05, 0, 10).find(r => r.fromLevel === 0 && r.toLevel === 1)!;
+  assert.ok(loss.profit < 0); assert.ok(loss.profitRate < 0); assert.ok(loss.hourlyProfit! < 0);
+  assert.equal(loss.marketFee, loss.grossSaleRevenue * .05); assert.equal(loss.totalCost, loss.bestStrategy.cashCost + loss.marketFee);
+  const timeless = calculateRankings(poor, [item], buffs, new Date(poor.timestamp), .05, 0, 0)[0]!;
+  assert.equal(timeless.hourlyProfit, null); assert.equal(timeless.experiencePerHour, null); assert.equal(timeless.experienceEfficiency, null);
 });
 test('rankings enumerate every quoted origin and target pair', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp));
