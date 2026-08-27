@@ -1,9 +1,10 @@
 import { sourceItems, successRates } from './catalog-data.js';
 import { chineseItemNames } from './item-translations.js';
 import { manufactureMaterialsByItem } from './manufacture-data.js';
+import { manufactureUpgradeItemByItem } from './manufacture-upgrade-data.js';
 
-export const GAME_DATA_VERSION = 'milkonomy-game-data-v1.20260309.0';
-export const FORMULA_VERSION = 'milkonomy-enhance-direct-port-v1';
+export const GAME_DATA_VERSION = 'milkonomy-game-data-v1.20260309.1';
+export const FORMULA_VERSION = 'milkonomy-enhance-direct-port-v2';
 
 export interface EnhancementStep {
   toLevel: number;
@@ -19,6 +20,7 @@ export interface EnhanceableItem {
   itemLevel?: number;
   protectionItemHrids?: ReadonlyArray<string>;
   manufactureMaterials?: ReadonlyArray<{ itemHrid: string; quantity: number }>;
+  manufactureUpgradeItemHrid?: string;
   steps: ReadonlyArray<EnhancementStep>;
 }
 
@@ -30,6 +32,7 @@ export const enhanceableItems: ReadonlyArray<EnhanceableItem> = sourceItems.map(
   itemLevel: item.itemLevel,
   ...('protectionItemHrids' in item ? { protectionItemHrids: item.protectionItemHrids } : {}),
   ...(manufactureMaterialsByItem[item.itemHrid] ? { manufactureMaterials: manufactureMaterialsByItem[item.itemHrid] } : {}),
+  ...(manufactureUpgradeItemByItem[item.itemHrid] ? { manufactureUpgradeItemHrid: manufactureUpgradeItemByItem[item.itemHrid] } : {}),
   steps: successRates.map((baseSuccessRate, index) => ({
     toLevel: index + 1,
     baseSuccessRate,
