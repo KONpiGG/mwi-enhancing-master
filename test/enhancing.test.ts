@@ -145,3 +145,13 @@ test('profit and training rankings reuse the identical best strategy objects', (
   assert.deepEqual(profit.map(x => x.profit), profit.map(x => x.profit).sort((a, b) => b - a));
   assert.deepEqual(training.map(x => x.costPerExperience), training.map(x => x.costPerExperience).sort((a, b) => a - b));
 });
+
+test('Milkonomy special protection list replaces the base item instead of extending it', () => {
+  const specialItem: EnhanceableItem = { ...item, protectionItemHrids: ['/items/protector'] };
+  const cheapBase = structuredClone(snapshot);
+  cheapBase.quotes.find(quote => quote.itemHrid === item.itemHrid && quote.enhancementLevel === 0)!.ask = 1;
+  const result = evaluateEnhancementStrategy({ snapshot: cheapBase, item: specialItem, targetLevel: 2, protectLevel: 1, buffs });
+  assert.ok(result.expectedProtections > 0);
+  assert.equal(result.protectionItemHrid, '/items/protector');
+  assert.equal(result.protectionCost, result.expectedProtections * 8);
+});

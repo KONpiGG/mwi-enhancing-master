@@ -118,7 +118,7 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   const visits = solved.visitsByOrigin[origin]!; const quotes = quoteIndex(snapshot);
   const missing = new Set<string>(); const ask = (hrid: string, level = 0) => { if (hrid === '/items/coin') return 1; const value = quotes.get(key(hrid, level))?.ask; if (value == null) missing.add(`${hrid}@+${level}:ask`); return value ?? NaN; };
   const bid = (hrid: string, level = 0) => { const value = quotes.get(key(hrid, level))?.bid; if (value == null) missing.add(`${hrid}@+${level}:bid`); return value ?? NaN; };
-  const protectionHrids = [...(item.protectionItemHrids ?? [item.itemHrid]), '/items/mirror_of_protection'];
+  const protectionHrids = [...(item.protectionItemHrids?.length ? item.protectionItemHrids : [item.itemHrid]), '/items/mirror_of_protection'];
   const protectionCandidates = protectionHrids.map(hrid => ({ hrid, price: quotes.get(key(hrid, 0))?.ask ?? NaN })).filter(x => Number.isFinite(x.price));
   const protection = protectionCandidates.reduce<{hrid: string; price: number} | null>((best, x) => !best || x.price < best.price ? x : best, null);
   const expectedProtections = rates.reduce((sum, r) => sum + visits[r.level]! * r.failure * (r.level >= protectLevel ? 1 : 0), 0);
