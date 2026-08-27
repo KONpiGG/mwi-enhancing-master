@@ -9,6 +9,18 @@ test('ships the attributed enhanceable catalog instead of an empty placeholder',
   assert.ok(enhanceableItems.every(item => item.steps.every(step => step.materials.length > 0)));
 });
 
+test('keeps manufacturing recipes separate from enhancement costs', () => {
+  const bottoms = enhanceableItems.find(item => item.itemHrid === '/items/enhancers_bottoms')!;
+  assert.deepEqual(bottoms.manufactureMaterials, [
+    { itemHrid: '/items/thread_of_expertise', quantity: 8 },
+    { itemHrid: '/items/branch_of_insight', quantity: 6 },
+    { itemHrid: '/items/enhancing_essence', quantity: 140000 },
+    { itemHrid: '/items/umbral_leather', quantity: 200 },
+    { itemHrid: '/items/radiant_fabric', quantity: 200 },
+  ]);
+  assert.notDeepEqual(bottoms.manufactureMaterials, bottoms.steps[0]!.materials);
+});
+
 interface MilkonomyItem {
   hrid: string;
   name: string;

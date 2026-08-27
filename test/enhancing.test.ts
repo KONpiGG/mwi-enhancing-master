@@ -3,12 +3,12 @@ import test from 'node:test';
 import { Worker } from 'node:worker_threads';
 import { buildEnhancementTransitions, calculateRankings, evaluateEnhancementStrategy, evaluateProtectionStrategies, rankProfitProjects, rankTrainingProjects } from '../src/enhancing/calculator.js';
 import { deriveEnhancingBuffs, type EnhancingPreset, type PresetGameData } from '../src/enhancing/preset.js';
-import type { EnhanceableItem } from '../src/game-data/catalog.js';
+import { enhanceableItems, type EnhanceableItem } from '../src/game-data/catalog.js';
 import type { MarketSnapshot } from '../src/market/types.js';
 import { presetGameData, presetOptions } from '../src/enhancing/game-preset-data.js';
 import { rankingWorkerUrl } from '../src/enhancing/ranking-worker-url.js';
 
-const item: EnhanceableItem = { itemHrid: '/items/sword', name: 'Sword', itemLevel: 10, protectionItemHrids: ['/items/protector'], steps: Array.from({ length: 7 }, (_, i) => ({ toLevel: i + 1, baseSuccessRate: .5 - i * .04, experience: 1.4 * (i + 1) * 20, materials: [{ itemHrid: '/items/dust', quantity: 2 }] })) };
+const item: EnhanceableItem = { itemHrid: '/items/sword', name: 'Sword', itemLevel: 10, protectionItemHrids: ['/items/protector'], manufactureMaterials: [{ itemHrid: '/items/dust', quantity: 2 }], steps: Array.from({ length: 7 }, (_, i) => ({ toLevel: i + 1, baseSuccessRate: .5 - i * .04, experience: 1.4 * (i + 1) * 20, materials: [{ itemHrid: '/items/dust', quantity: 2 }] })) };
 const quotes = Array.from({ length: 8 }, (_, enhancementLevel) => ({ itemHrid: item.itemHrid, enhancementLevel, ask: 100 + enhancementLevel * 100, bid: 90 + enhancementLevel * 140, hourlyAverage: 100, hourlyVolume: 20 }));
 const snapshot: MarketSnapshot = { timestamp: '2026-08-25T12:00:00.000Z', quotes: [...quotes, { itemHrid: '/items/dust', enhancementLevel: 0, ask: 5, bid: 4, hourlyAverage: 5, hourlyVolume: 100 }, { itemHrid: '/items/protector', enhancementLevel: 0, ask: 8, bid: 7, hourlyAverage: 8, hourlyVolume: 100 }] };
 const buffs = { playerLevel: 10, success: 0, blessed: 0, experience: 0, speed: 0 };
@@ -76,6 +76,23 @@ test('self manufacture supplies missing or overpriced level-zero equipment', () 
   const row = calculateRankings(overpriced, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12, true).find(row => row.fromLevel === 0)!;
   assert.equal(row.purchaseCost, 10);
   assert.equal(row.bestStrategy.manufactureCost, 10);
+});
+
+test('self manufacture uses the production recipe rather than one enhancement attempt', () => {
+  const bottoms = enhanceableItems.find(entry => entry.itemHrid === '/items/enhancers_bottoms')!;
+  const priced: MarketSnapshot = { timestamp: snapshot.timestamp, quotes: [
+    { itemHrid: bottoms.itemHrid, enhancementLevel: 0, ask: 400_000_000, bid: 390_000_000, hourlyAverage: 395_000_000, hourlyVolume: 1 },
+    { itemHrid: bottoms.itemHrid, enhancementLevel: 1, ask: 450_000_000, bid: 440_000_000, hourlyAverage: 445_000_000, hourlyVolume: 1 },
+    { itemHrid: '/items/thread_of_expertise', enhancementLevel: 0, ask: 10_000_000, bid: 9_000_000, hourlyAverage: 9_500_000, hourlyVolume: 1 },
+    { itemHrid: '/items/branch_of_insight', enhancementLevel: 0, ask: 20_000_000, bid: 19_000_000, hourlyAverage: 19_500_000, hourlyVolume: 1 },
+    { itemHrid: '/items/enhancing_essence', enhancementLevel: 0, ask: 1_000, bid: 900, hourlyAverage: 950, hourlyVolume: 1 },
+    { itemHrid: '/items/umbral_leather', enhancementLevel: 0, ask: 40_000, bid: 39_000, hourlyAverage: 39_500, hourlyVolume: 1 },
+    { itemHrid: '/items/radiant_fabric', enhancementLevel: 0, ask: 45_000, bid: 44_000, hourlyAverage: 44_500, hourlyVolume: 1 },
+  ] };
+  const result = evaluateEnhancementStrategy({ snapshot: priced, item: bottoms, targetLevel: 1, protectLevel: 1, buffs: { ...buffs, playerLevel: 90 }, manufactureBase: true });
+  assert.equal(result.manufactureCost, 357_000_000);
+  assert.equal(result.baseItemCost, 357_000_000);
+  assert.equal(result.baseItemSource, 'manufacture');
 });
 
 test('self manufacture keeps the market item when it is cheaper or recipe prices are missing', () => {
