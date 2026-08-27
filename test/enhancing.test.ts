@@ -5,7 +5,7 @@ import { buildEnhancementTransitions, calculateRankings, evaluateEnhancementStra
 import { deriveEnhancingBuffs, type EnhancingPreset, type PresetGameData } from '../src/enhancing/preset.js';
 import type { EnhanceableItem } from '../src/game-data/catalog.js';
 import type { MarketSnapshot } from '../src/market/types.js';
-import { presetOptions } from '../src/enhancing/game-preset-data.js';
+import { presetGameData, presetOptions } from '../src/enhancing/game-preset-data.js';
 import { rankingWorkerUrl } from '../src/enhancing/ranking-worker-url.js';
 
 const item: EnhanceableItem = { itemHrid: '/items/sword', name: 'Sword', itemLevel: 10, protectionItemHrids: ['/items/protector'], steps: Array.from({ length: 7 }, (_, i) => ({ toLevel: i + 1, baseSuccessRate: .5 - i * .04, experience: 0, materials: [{ itemHrid: '/items/dust', quantity: 2 }] })) };
@@ -97,11 +97,24 @@ test('reference community and achievement buffs use their official enhancement f
   const data: PresetGameData = { equipment: {}, consumables: {}, seals: {}, communityBuffs: { speed: [{ attribute: 'Speed', value: .2, perEnhanceLevel: .005, levelMode: 'base-plus' }], moo: [{ attribute: 'Experience', value: .05 }] }, achievements: { champion: [{ attribute: 'Success', value: .002 }] }, shrines: {} };
   const result = deriveEnhancingBuffs(preset, data); assert.deepEqual({ ...result, speed: Number(result.speed.toFixed(3)) }, { playerLevel: 100, success: .002, blessed: 0, experience: .05, speed: .21 });
 });
+test('Milkonomy house, enhancing armor, cape, and shrines derive the reference buffs', () => {
+  const preset = createReferencePreset();
+  const result = deriveEnhancingBuffs(preset, presetGameData);
+  assert.ok(Math.abs(result.success - .002) < 1e-12);
+  assert.ok(Math.abs(result.speed - .305) < 1e-12);
+  assert.ok(Math.abs(result.experience - .122) < 1e-12);
+});
 test('preset equipment options cover every requested slot with Chinese names', () => {
-  assert.deepEqual(new Set(presetOptions.map(option => option.slot)), new Set(['tool', 'charm', 'hands', 'neck', 'earrings', 'ring', 'pouch']));
+  assert.deepEqual(new Set(presetOptions.map(option => option.slot)), new Set(['tool', 'charm', 'hands', 'body', 'legs', 'back', 'neck', 'earrings', 'ring', 'pouch']));
   assert.ok(presetOptions.every(option => /[\u3400-\u9fff]/u.test(option.name)));
   assert.ok(presetOptions.some(option => option.hrid === '/items/philosophers_earrings' && option.name === '贤者耳环'));
 });
+
+function createReferencePreset(): EnhancingPreset {
+  return { id: 'reference', name: 'reference', enhancing: { playerLevel: 100, houseLevel: 4, tool: {}, charm: {}, teas: [] },
+    specialEquipment: { hands: {}, body: { hrid: '/items/enhancers_top', enhanceLevel: 0 }, legs: { hrid: '/items/enhancers_bottoms', enhanceLevel: 0 }, back: { hrid: '/items/chance_cape', enhanceLevel: 0 }, neck: {}, earrings: {}, ring: {}, pouch: {} },
+    seals: [], communityBuffs: {}, achievementBuffs: {}, shrines: { rhythm: { level: 3 }, scholar: { level: 10 } } };
+}
 test('ranking exposes unified cost, hourly profit, experience efficiency and exact variance risk', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp), .05, 0, 10); const row = rows[0]!;
   assert.equal(row.totalCost, row.purchaseCost + row.materialCost + row.protectionCost + row.marketFee);
@@ -152,6 +165,15 @@ test('Milkonomy special protection list replaces the base item instead of extend
   cheapBase.quotes.find(quote => quote.itemHrid === item.itemHrid && quote.enhancementLevel === 0)!.ask = 1;
   const result = evaluateEnhancementStrategy({ snapshot: cheapBase, item: specialItem, targetLevel: 2, protectLevel: 1, buffs });
   assert.ok(result.expectedProtections > 0);
+  assert.equal(result.protectionItemHrid, '/items/protector');
+  assert.equal(result.protectionCost, result.expectedProtections * 8);
+});
+
+test('protection defaults to the cheapest quoted allowed material', () => {
+  const specialItem: EnhanceableItem = { ...item, protectionItemHrids: ['/items/expensive_protector', '/items/protector'] };
+  const priced = structuredClone(snapshot);
+  priced.quotes.push({ itemHrid: '/items/expensive_protector', enhancementLevel: 0, ask: 80, bid: 70, hourlyAverage: 75, hourlyVolume: 10 });
+  const result = evaluateEnhancementStrategy({ snapshot: priced, item: specialItem, targetLevel: 2, protectLevel: 1, buffs });
   assert.equal(result.protectionItemHrid, '/items/protector');
   assert.equal(result.protectionCost, result.expectedProtections * 8);
 });
