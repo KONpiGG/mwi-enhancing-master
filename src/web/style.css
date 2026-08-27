@@ -8,7 +8,7 @@
 .preset-trigger{height:36px;padding:8px 16px}
 .preset-dialog{width:min(1100px,calc(100% - 40px));max-height:88vh;padding:24px;overflow:auto}
 .preset-dialog .preset-body{padding:0;border:0}
-.liquidity{display:inline-grid;place-items:center;min-width:1.65em;padding:2px 5px;border-radius:4px;font-weight:800;color:#071b15}
-.liquidity-S{background:#34d399}.liquidity-A{background:#6ee7b7}.liquidity-B{background:#facc15}.liquidity-C{background:#fb923c}.liquidity-D{background:#f87171}
+.liquidity{font-weight:800}
+.liquidity-S{color:#34d399}.liquidity-A{color:#6ee7b7}.liquidity-B{color:#facc15}.liquidity-C{color:#fb923c}.liquidity-D{color:#f87171}
 @media(max-width:900px){.settings-controls{grid-template-columns:1fr 1fr}.item-filter{grid-column:1/-1}}
 @media(max-width:560px){.settings-controls{grid-template-columns:1fr}.item-filter{grid-column:auto}.inline-toggle{white-space:normal}}
