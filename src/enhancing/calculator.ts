@@ -131,7 +131,9 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
       cost += quantity * ask(material.itemHrid);
       materialQuantities.set(material.itemHrid, (materialQuantities.get(material.itemHrid) ?? 0) + quantity);
     }
-    const experience = attempts * (r.success + .1 * r.failure) * (1.4 * (r.level + 1) * (10 + (item.itemLevel ?? 0))) * (1 + buffs.experience);
+    // Experience belongs to the attempted enhancement step. In particular,
+    // +0 -> +1 and +1 -> +2 do not award the same base experience.
+    const experience = attempts * (r.success + .1 * r.failure) * item.steps[r.level]!.experience * (1 + buffs.experience);
     materialCost += cost; totalExperience += experience;
     return { level: r.level, successRate: r.success, normalUpRate: r.normalUp, leapUpRate: r.leapUp, failureRate: r.failure, attempts, protections: attempts * r.failure * (r.level >= protectLevel ? 1 : 0), experience, materialCost: cost };
   });
@@ -149,7 +151,10 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
 export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protectLevel'>): ProtectionEvaluation | null {
   const allStrategies = Array.from({ length: input.targetLevel }, (_, i) => evaluateEnhancementStrategy({ ...input, protectLevel: i + 1 }));
   const valid = allStrategies.filter(x => x.calculable); if (!valid.length) return null;
-  return { bestStrategy: valid.reduce((a, b) => b.cashCost < a.cashCost ? b : a), allStrategies };
+  // Compare policies by earnings per unit of player time. A cheaper policy can
+  // take sufficiently longer that it is the worse protection policy in play.
+  const hourlyProfit = (strategy: EnhancementStrategyResult) => strategy.expectedTime > 0 ? strategy.expectedProfit * 3600 / strategy.expectedTime : -Infinity;
+  return { bestStrategy: valid.reduce((a, b) => hourlyProfit(b) > hourlyProfit(a) ? b : a), allStrategies };
 }
 
 /** Shared project set; profit and training views only sort/filter these rows differently. */
@@ -230,7 +235,7 @@ function riskLevel(score:number) { return score<=20?'很低':score<=40?'低':sco
 function percentileRanks(values:number[]) { const sorted=[...values].sort((a,b)=>a-b), ranks=new Map<number,number>(); for(let start=0;start<sorted.length;) { let end=start+1; while(end<sorted.length&&sorted[end]===sorted[start])end++; ranks.set(sorted[start]!,sorted.length===1?1:((start+end-1)/2)/(sorted.length-1)); start=end; } return ranks; }
 function applyExperienceEfficiency(rows:RankingRow[]) { const time=rows.flatMap(r=>r.experiencePerHour==null?[]:[r.experiencePerHour]), gold=rows.flatMap(r=>r.experiencePerGold==null?[]:[r.experiencePerGold]), timeRanks=percentileRanks(time), goldRanks=percentileRanks(gold); for(const r of rows) if(r.experiencePerHour!=null&&r.experiencePerGold!=null) r.experienceEfficiency=100*Math.sqrt(timeRanks.get(r.experiencePerHour)!*goldRanks.get(r.experiencePerGold)!); }
 
-export const rankProfitProjects = (rows: readonly RankingRow[]) => rows.filter(r => r.profit > 0).sort((a, b) => b.profit - a.profit);
+export const rankProfitProjects = (rows: readonly RankingRow[]) => rows.filter(r => r.profit > 0).sort((a, b) => (b.hourlyProfit ?? -Infinity) - (a.hourlyProfit ?? -Infinity));
 export const rankTrainingProjects = (rows: readonly RankingRow[]) => [...rows].sort((a, b) => a.costPerExperience - b.costPerExperience);
 
 export interface RankingBatch { rows: RankingRow[]; candidateCount: number; successCount: number; excludedMissingPriceCount: number; exactCalculationMs: number; riskCalculationMs: number }
