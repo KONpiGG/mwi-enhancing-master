@@ -233,6 +233,12 @@ test('historical ranking mode admits finished equipment without a highest bid', 
   assert.equal(row.marketListingPrice, null);
   assert.ok(Number.isFinite(row.capitalRequired));
 });
+test('historical ranking mode skips enhancement levels with no quote', () => {
+  const missingTarget = structuredClone(snapshot);
+  missingTarget.quotes = missingTarget.quotes.filter(q => q.itemHrid !== item.itemHrid || q.enhancementLevel !== 1);
+  assert.doesNotThrow(() => calculateRankings(missingTarget, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12, false, true));
+  assert.equal(calculateRankings(missingTarget, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12, false, true).some(row => row.toLevel === 1), false);
+});
 test('ranking never drops projects using a market-only shortlist', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12);
   assert.equal(rows.length, 28);

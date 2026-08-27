@@ -183,7 +183,10 @@ export function calculateRankings(snapshot: MarketSnapshot, items: readonly Enha
   const candidates: { item: EnhanceableItem; originLevel: number; targetLevel: number }[] = [];
   for (const item of items) for (let originLevel = 0; originLevel < item.steps.length; originLevel++) for (let targetLevel = originLevel + 1; targetLevel <= item.steps.length; targetLevel++) {
     const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel));
-    if (((!manufactureBase || originLevel !== 0) && buy?.ask == null) || (!allowMissingFinishedBid && sell?.bid == null)) continue;
+    // History can replace a missing bid, but it cannot identify an enhancement
+    // level that has no market quote at all. Requiring the quote also keeps the
+    // listing/volume metadata below safe to read.
+    if (!sell || ((!manufactureBase || originLevel !== 0) && buy?.ask == null) || (!allowMissingFinishedBid && sell.bid == null)) continue;
     candidates.push({ item, originLevel, targetLevel });
   }
   for (const { item, originLevel, targetLevel } of candidates) {
