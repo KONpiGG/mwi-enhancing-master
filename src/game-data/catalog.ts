@@ -26,6 +26,7 @@ export const enhanceableItems: ReadonlyArray<EnhanceableItem> = sourceItems.map(
   name: chineseItemNames[item.itemHrid] ?? item.name,
   englishName: item.name,
   itemLevel: item.itemLevel,
+  ...('protectionItemHrids' in item ? { protectionItemHrids: item.protectionItemHrids } : {}),
   steps: successRates.map((baseSuccessRate, index) => ({
     toLevel: index + 1,
     baseSuccessRate,
