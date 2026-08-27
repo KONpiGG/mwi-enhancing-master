@@ -63,6 +63,33 @@ test('material cost excludes the separately purchased base item', () => {
   assert.ok(Math.abs(result.cashCost - result.baseItemCost - result.materialCost) < 1e-12);
 });
 
+test('self manufacture supplies missing or overpriced level-zero equipment', () => {
+  const missingBase = structuredClone(snapshot);
+  missingBase.quotes = missingBase.quotes.filter(quote => quote.itemHrid !== item.itemHrid || quote.enhancementLevel !== 0);
+  assert.equal(calculateRankings(missingBase, [item], buffs, new Date(snapshot.timestamp)).some(row => row.fromLevel === 0), false);
+  const manufactured = calculateRankings(missingBase, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12, true);
+  assert.equal(manufactured.filter(row => row.fromLevel === 0).length, 7);
+  assert.ok(manufactured.filter(row => row.fromLevel === 0).every(row => row.purchaseCost === 10 && row.bestStrategy.baseItemSource === 'manufacture'));
+
+  const overpriced = structuredClone(snapshot);
+  overpriced.quotes.find(quote => quote.itemHrid === item.itemHrid && quote.enhancementLevel === 0)!.ask = 11;
+  const row = calculateRankings(overpriced, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12, true).find(row => row.fromLevel === 0)!;
+  assert.equal(row.purchaseCost, 10);
+  assert.equal(row.bestStrategy.manufactureCost, 10);
+});
+
+test('self manufacture keeps the market item when it is cheaper or recipe prices are missing', () => {
+  const cheap = structuredClone(snapshot);
+  cheap.quotes.find(quote => quote.itemHrid === item.itemHrid && quote.enhancementLevel === 0)!.ask = 9;
+  let result = evaluateEnhancementStrategy({ snapshot: cheap, item, targetLevel: 1, protectLevel: 1, buffs, manufactureBase: true });
+  assert.equal(result.baseItemCost, 9);
+  assert.equal(result.baseItemSource, 'market');
+
+  cheap.quotes.find(quote => quote.itemHrid === '/items/dust')!.ask = null;
+  result = evaluateEnhancementStrategy({ snapshot: cheap, item, targetLevel: 1, protectLevel: 1, buffs, manufactureBase: true });
+  assert.equal(result.baseItemSource, 'market');
+});
+
 test('Milkonomy does not replace its upstream rate semantics with generic clamps', () => {
   const { rates } = buildEnhancementTransitions(item, { ...buffs, success: 2, blessed: 1.5 }, 1, 1);
   assert.equal(rates[0]!.success, 1.5);

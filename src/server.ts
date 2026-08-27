@@ -34,6 +34,7 @@ createServer(async (request, response) => {
       const level = Number(url.searchParams.get('playerLevel') ?? 0);
       const feeRate = .05;
       const hourlyRate = Number(url.searchParams.get('hourlyRate') ?? 0);
+      const manufactureBase = url.searchParams.get('manufactureBase') === 'true';
       if (!Number.isInteger(level) || level < 0 || level > 200) return json(response, 400, { error: '强化等级必须是 0–200 的整数' });
       if (!Number.isFinite(hourlyRate) || hourlyRate < 0) return json(response, 400, { error: '每小时工时费必须是非负数' });
       const snapshot = await store.latest();
@@ -59,7 +60,7 @@ createServer(async (request, response) => {
       const cacheKey = `${snapshot.timestamp}:${level}:${hourlyRate}:${url.searchParams}`;
       let batch = rankingCache.get(cacheKey);
       if (!batch) {
-        batch = await runRankingWorker(request, { snapshot, items: enhanceableItems, buffs: profile, now: new Date().toISOString(), marketFeeRate: feeRate, hourlyRate, actionSeconds: 12 });
+        batch = await runRankingWorker(request, { snapshot, items: enhanceableItems, buffs: profile, now: new Date().toISOString(), marketFeeRate: feeRate, hourlyRate, actionSeconds: 12, manufactureBase });
         rankingCache.set(cacheKey, batch);
         if (rankingCache.size > 20) rankingCache.delete(rankingCache.keys().next().value!);
       }

@@ -10,6 +10,7 @@ export interface EnhancementStrategyResult {
   materialCost: number; protectionCost: number; cashCost: number; grossRevenue: number; marketFee: number;
   netRevenue: number; expectedProfit: number; profitRate: number; totalExperience: number;
   netTrainingCost: number; costPerExperience: number; attemptVariance: number; visits: number[]; steps: StrategyStep[]; materialPurchases: MaterialPurchase[];
+  baseItemSource: 'market' | 'manufacture'; manufactureCost: number;
 }
 export interface ProtectionEvaluation { bestStrategy: EnhancementStrategyResult; allStrategies: EnhancementStrategyResult[] }
 export interface RankingRow {
@@ -21,7 +22,7 @@ export interface RankingRow {
   recent72hVolume: number | null; volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
   totalCost: number; lossProbability: number; profitP10: number; profitP50: number; profitP90: number; downsideLossRate: number; riskScore: number; riskLevel: string; simulationRuns: number;
 }
-export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem; originLevel?: number; targetLevel: number; protectLevel: number; buffs?: EnhancingBuffs; marketFeeRate?: number; actionSeconds?: number }
+export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem; originLevel?: number; targetLevel: number; protectLevel: number; buffs?: EnhancingBuffs; marketFeeRate?: number; actionSeconds?: number; manufactureBase?: boolean }
 
 const key = (h: string, l = 0) => `${h}\0${l}`;
 // Risk is secondary metadata, while expected profit/experience is solved exactly.
@@ -123,7 +124,17 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   const protection = protectionCandidates.reduce<{hrid: string; price: number} | null>((best, x) => !best || x.price < best.price ? x : best, null);
   const expectedProtections = rates.reduce((sum, r) => sum + visits[r.level]! * r.failure * (r.level >= protectLevel ? 1 : 0), 0);
   if (expectedProtections !== 0 && !protection) missing.add('protection-item:ask');
-  const baseItemCost = ask(item.itemHrid, origin); let materialCost = 0; let totalExperience = 0; const materialQuantities = new Map<string, number>();
+  const marketBasePrice = quotes.get(key(item.itemHrid, origin))?.ask;
+  let manufactureCost = NaN;
+  if (input.manufactureBase && origin === 0) manufactureCost = item.steps[0]!.materials.reduce((sum, material) => {
+    const price = material.itemHrid === '/items/coin' ? 1 : quotes.get(key(material.itemHrid, 0))?.ask;
+    return price == null ? NaN : sum + material.quantity * price;
+  }, 0);
+  const useManufacture = Number.isFinite(manufactureCost) && (marketBasePrice == null || marketBasePrice > manufactureCost);
+  if (marketBasePrice == null && !useManufacture && input.manufactureBase && origin === 0) {
+    for (const material of item.steps[0]!.materials) if (material.itemHrid !== '/items/coin' && quotes.get(key(material.itemHrid, 0))?.ask == null) missing.add(`${material.itemHrid}@+0:ask`);
+  }
+  const baseItemCost = useManufacture ? manufactureCost : ask(item.itemHrid, origin); let materialCost = 0; let totalExperience = 0; const materialQuantities = new Map<string, number>();
   const steps = rates.map(r => {
     const attempts = visits[r.level]!; let cost = 0;
     for (const material of item.steps[r.level]!.materials) {
@@ -142,7 +153,7 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   const grossRevenue = bid(item.itemHrid, targetLevel); const marketFee = grossRevenue * (input.marketFeeRate ?? .05);
   const cashCost = baseItemCost + materialCost + actualProtectionCost; const netRevenue = grossRevenue - marketFee;
   const expectedProfit = netRevenue - cashCost; const expectedActions = visits.reduce((a, b) => a + b, 0); const calculable = missing.size === 0 && [cashCost, grossRevenue].every(Number.isFinite);
-  return { protectLevel, protectionItemHrid: expectedProtections ? protection?.hrid ?? null : null, calculable, missingPrices: [...missing], expectedActions, expectedProtections, materialPurchases: [...materialQuantities].map(([itemHrid, quantity]) => ({ itemHrid, quantity })),
+  return { protectLevel, protectionItemHrid: expectedProtections ? protection?.hrid ?? null : null, calculable, missingPrices: [...missing], expectedActions, expectedProtections, materialPurchases: [...materialQuantities].map(([itemHrid, quantity]) => ({ itemHrid, quantity })), baseItemSource: useManufacture ? 'manufacture' : 'market', manufactureCost,
     expectedTime: expectedActions * (input.actionSeconds ?? 0) / (1 + buffs.speed + Math.max(0, buffs.playerLevel - (item.itemLevel ?? 0)) * .01), baseItemCost, materialCost, protectionCost: actualProtectionCost, cashCost,
     grossRevenue, marketFee, netRevenue, expectedProfit, profitRate: expectedProfit / cashCost, totalExperience, netTrainingCost: cashCost - netRevenue,
     costPerExperience: (cashCost - netRevenue) / totalExperience, visits, steps, attemptVariance: solved.varianceByOrigin[origin]! };
@@ -158,21 +169,21 @@ export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protect
 }
 
 /** Shared project set; profit and training views only sort/filter these rows differently. */
-export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12): RankingRow[] {
+export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12, manufactureBase = false): RankingRow[] {
   const resolved = typeof buffs === 'number' ? { playerLevel: buffs, success: 0, blessed: 0, experience: 0, speed: 0 } : buffs; const rows: RankingRow[] = []; const quotes = quoteIndex(snapshot);
   // A market-only shortlist is not valid here: player buffs can change which
   // project wins. Enumerate every origin/target pair that has usable quotes.
   const candidates: { item: EnhanceableItem; originLevel: number; targetLevel: number }[] = [];
   for (const item of items) for (let originLevel = 0; originLevel < item.steps.length; originLevel++) for (let targetLevel = originLevel + 1; targetLevel <= item.steps.length; targetLevel++) {
     const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel));
-    if (buy?.ask == null || sell?.bid == null) continue;
+    if (((!manufactureBase || originLevel !== 0) && buy?.ask == null) || sell?.bid == null) continue;
     candidates.push({ item, originLevel, targetLevel });
   }
   for (const { item, originLevel, targetLevel } of candidates) {
-    const buy = quotes.get(key(item.itemHrid, originLevel))!; const sell = quotes.get(key(item.itemHrid, targetLevel))!;
-    const evaluation = evaluateProtectionStrategies({ snapshot, item, originLevel, targetLevel, buffs: resolved, marketFeeRate, actionSeconds }); if (!evaluation) continue;
+    const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel))!;
+    const evaluation = evaluateProtectionStrategies({ snapshot, item, originLevel, targetLevel, buffs: resolved, marketFeeRate, actionSeconds, manufactureBase }); if (!evaluation) continue;
     const b = evaluation.bestStrategy;
-    const midpoint = (buy.ask! + (buy.bid ?? buy.ask!)) / 2; const spread = midpoint ? (buy.ask! - (buy.bid ?? buy.ask!)) / midpoint : 0; const volume = Math.min(buy.hourlyVolume, sell.hourlyVolume); const risks: string[] = [];
+    const midpoint = buy?.ask == null ? 0 : (buy.ask + (buy.bid ?? buy.ask)) / 2; const spread = midpoint ? (buy!.ask! - (buy!.bid ?? buy!.ask!)) / midpoint : 0; const volume = buy ? Math.min(buy.hourlyVolume, sell.hourlyVolume) : sell.hourlyVolume; const risks: string[] = [];
     if (volume < 5) risks.push('低成交量'); if (spread > .2) risks.push('买卖价差较大'); if ((now.valueOf() - new Date(snapshot.timestamp).valueOf()) / 36e5 > 2) risks.push('市场数据陈旧');
     const totalCost = b.cashCost + b.marketFee;
     const profit = b.grossRevenue - totalCost;
@@ -240,9 +251,9 @@ export const rankTrainingProjects = (rows: readonly RankingRow[]) => [...rows].s
 
 export interface RankingBatch { rows: RankingRow[]; candidateCount: number; successCount: number; excludedMissingPriceCount: number; exactCalculationMs: number; riskCalculationMs: number }
 
-export function calculateRankingBatch(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12): RankingBatch {
+export function calculateRankingBatch(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12, manufactureBase = false): RankingBatch {
   const started = performance.now();
   const candidateCount = items.reduce((sum, item) => sum + item.steps.length * (item.steps.length + 1) / 2, 0);
-  const rows = calculateRankings(snapshot, items, buffs, now, marketFeeRate, hourlyRate, actionSeconds);
+  const rows = calculateRankings(snapshot, items, buffs, now, marketFeeRate, hourlyRate, actionSeconds, manufactureBase);
   return { rows, candidateCount, successCount: rows.length, excludedMissingPriceCount: candidateCount - rows.length, exactCalculationMs: performance.now() - started, riskCalculationMs: 0 };
 }
