@@ -8,7 +8,7 @@ import type { MarketSnapshot } from '../src/market/types.js';
 import { presetGameData, presetOptions } from '../src/enhancing/game-preset-data.js';
 import { rankingWorkerUrl } from '../src/enhancing/ranking-worker-url.js';
 
-const item: EnhanceableItem = { itemHrid: '/items/sword', name: 'Sword', itemLevel: 10, protectionItemHrids: ['/items/protector'], steps: Array.from({ length: 7 }, (_, i) => ({ toLevel: i + 1, baseSuccessRate: .5 - i * .04, experience: 0, materials: [{ itemHrid: '/items/dust', quantity: 2 }] })) };
+const item: EnhanceableItem = { itemHrid: '/items/sword', name: 'Sword', itemLevel: 10, protectionItemHrids: ['/items/protector'], steps: Array.from({ length: 7 }, (_, i) => ({ toLevel: i + 1, baseSuccessRate: .5 - i * .04, experience: 1.4 * (i + 1) * 20, materials: [{ itemHrid: '/items/dust', quantity: 2 }] })) };
 const quotes = Array.from({ length: 8 }, (_, enhancementLevel) => ({ itemHrid: item.itemHrid, enhancementLevel, ask: 100 + enhancementLevel * 100, bid: 90 + enhancementLevel * 140, hourlyAverage: 100, hourlyVolume: 20 }));
 const snapshot: MarketSnapshot = { timestamp: '2026-08-25T12:00:00.000Z', quotes: [...quotes, { itemHrid: '/items/dust', enhancementLevel: 0, ask: 5, bid: 4, hourlyAverage: 5, hourlyVolume: 100 }, { itemHrid: '/items/protector', enhancementLevel: 0, ask: 8, bid: 7, hourlyAverage: 8, hourlyVolume: 100 }] };
 const buffs = { playerLevel: 10, success: 0, blessed: 0, experience: 0, speed: 0 };
@@ -35,9 +35,9 @@ test('one base item is bought regardless of failures and no-protection consumes 
   const result = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 3, protectLevel: 3, buffs });
   assert.equal(result.baseItemCost, 100); assert.equal(result.expectedProtections, 0); assert.ok(result.expectedActions > 3);
 });
-test('enumerates every strategy and selects the minimum cash cost', () => {
+test('enumerates every strategy and selects the greatest hourly profit', () => {
   const result = evaluateProtectionStrategies({ snapshot, item, targetLevel: 7, buffs })!;
-  assert.equal(result.allStrategies.length, 7); assert.equal(result.bestStrategy.cashCost, Math.min(...result.allStrategies.map(x => x.cashCost)));
+  assert.equal(result.allStrategies.length, 7); assert.equal(result.bestStrategy, result.allStrategies.reduce((a, b) => b.expectedProfit / b.expectedTime > a.expectedProfit / a.expectedTime ? b : a));
 });
 test('failure returns to zero below protection and falls one level at/above it', () => {
   const { q, rates } = buildEnhancementTransitions(item, buffs, 4, 2);
@@ -75,6 +75,15 @@ test('protections only count protected failures', () => {
 test('experience includes 10% failure experience then the experience buff', () => {
   const r = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 1, protectLevel: 1, buffs: { ...buffs, experience: .5 } });
   assert.ok(Math.abs(r.totalExperience - r.visits[0]! * (.5 + .1 * .5) * 1.4 * 20 * 1.5) < 1e-10);
+});
+test('experience uses the distinct catalog value for every attempted level', () => {
+  const custom = structuredClone(item);
+  custom.steps[0]!.experience = 10;
+  custom.steps[1]!.experience = 70;
+  const r = evaluateEnhancementStrategy({ snapshot, item: custom, targetLevel: 2, protectLevel: 2, buffs });
+  assert.ok(Math.abs(r.steps[0]!.experience - r.visits[0]! * (.5 + .1 * .5) * 10) < 1e-10);
+  assert.ok(Math.abs(r.steps[1]!.experience - r.visits[1]! * (.46 + .1 * .54) * 70) < 1e-10);
+  assert.equal(r.totalExperience, r.steps[0]!.experience + r.steps[1]!.experience);
 });
 test('each enhancing level above item recommendation grants one percent action speed', () => {
   const r = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 1, protectLevel: 1, actionSeconds: 10, buffs: { ...buffs, playerLevel: 15 } });
@@ -155,7 +164,7 @@ test('ranking never drops projects using a market-only shortlist', () => {
 test('profit and training rankings reuse the identical best strategy objects', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp)); const profit = rankProfitProjects(rows); const training = rankTrainingProjects(rows);
   for (const row of profit) assert.equal(training.find(x => x.id === row.id)!.bestStrategy, row.bestStrategy);
-  assert.deepEqual(profit.map(x => x.profit), profit.map(x => x.profit).sort((a, b) => b - a));
+  assert.deepEqual(profit.map(x => x.hourlyProfit), profit.map(x => x.hourlyProfit).sort((a, b) => b! - a!));
   assert.deepEqual(training.map(x => x.costPerExperience), training.map(x => x.costPerExperience).sort((a, b) => a - b));
 });
 
