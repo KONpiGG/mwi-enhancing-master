@@ -40,14 +40,17 @@ createServer(async (request, response) => {
       const catalogItems = enhanceableItems.map(({ itemHrid, name }) => ({ itemHrid, itemName: name }));
       if (!snapshot) return json(response, 200, { timestamp: null, rows: [], marketItems: [], catalogItems, presetOptions, message: '还没有市场快照，请点击“更新市场数据”。' });
       const preset = createPreset(); preset.enhancing.playerLevel = level;
+      preset.enhancing.houseLevel = Number(url.searchParams.get('houseLevel') ?? 0);
       const equipment = JSON.parse(url.searchParams.get('equipment') ?? '{}') as Record<string, {hrid?: string; enhanceLevel?: number}>;
       preset.enhancing.tool = equipment.tool ?? {}; preset.enhancing.charm = equipment.charm ?? {};
-      for (const slot of ['hands','neck','earrings','ring','pouch'] as const) preset.specialEquipment[slot] = equipment[slot] ?? {};
+      for (const slot of ['hands','body','legs','back','neck','earrings','ring','pouch'] as const) preset.specialEquipment[slot] = equipment[slot] ?? {};
       preset.enhancing.teas = (url.searchParams.get('teas') ?? '').split(',').filter(Boolean);
       const community = JSON.parse(url.searchParams.get('communityBuffs') ?? '{}') as Record<string, number>;
       for (const [hrid, buffLevel] of Object.entries(community)) preset.communityBuffs[hrid] = { hrid, level: buffLevel };
       const achievements = (url.searchParams.get('achievements') ?? '').split(',').filter(Boolean);
       for (const hrid of achievements) preset.achievementBuffs[hrid] = { enabled: true };
+      const shrines = JSON.parse(url.searchParams.get('shrines') ?? '{}') as Record<string, number>;
+      for (const [hrid, shrineLevel] of Object.entries(shrines)) preset.shrines[hrid] = { level: shrineLevel };
       const teaLevel = preset.enhancing.teas.includes('/items/ultra_enhancing_tea') ? 8 : preset.enhancing.teas.includes('/items/super_enhancing_tea') ? 6 : preset.enhancing.teas.includes('/items/enhancing_tea') ? 3 : 0;
       const profile = deriveEnhancingBuffs(preset, presetGameData); profile.playerLevel += teaLevel;
       if (Object.values(profile).some(value => !Number.isFinite(value))) return json(response, 400, { error: '玩家加成必须是有效数字' });

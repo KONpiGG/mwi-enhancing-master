@@ -1,7 +1,7 @@
 export interface EquipmentSelection { hrid?: string; enhanceLevel?: number }
 export interface EnhancingPreset {
   id: string; name: string; color?: string;
-  enhancing: { playerLevel: number; tool: EquipmentSelection; charm: EquipmentSelection; teas: string[] };
+  enhancing: { playerLevel: number; houseLevel?: number; tool: EquipmentSelection; charm: EquipmentSelection; teas: string[] };
   specialEquipment: { hands: EquipmentSelection; body: EquipmentSelection; legs: EquipmentSelection; back: EquipmentSelection; neck: EquipmentSelection; earrings: EquipmentSelection; ring: EquipmentSelection; pouch: EquipmentSelection };
   seals: string[]; communityBuffs: Record<string, { hrid: string; level: number }>;
   achievementBuffs: Record<string, { enabled: boolean }>; shrines: Record<string, { level: number }>;
@@ -27,6 +27,12 @@ export function deriveEnhancingBuffs(preset: EnhancingPreset, data: PresetGameDa
   } };
   const equipment = [preset.enhancing.tool, preset.enhancing.charm, ...Object.values(preset.specialEquipment)];
   for (const selection of equipment) if (selection.hrid) add(data.equipment[selection.hrid], selection.enhanceLevel ?? 0, true);
+  // Milkonomy HOUSE_MAP.enhancing: every house level contributes these three
+  // buffs. Enhancing deliberately receives no house efficiency bonus.
+  const houseLevel = preset.enhancing.houseLevel ?? 0;
+  result.speed += houseLevel * .01;
+  result.success += houseLevel * .0005;
+  result.experience += houseLevel * .0005;
   for (const hrid of preset.enhancing.teas) add(data.consumables[hrid]); for (const hrid of preset.seals) add(data.seals[hrid]);
   for (const value of Object.values(preset.communityBuffs)) add(data.communityBuffs[value.hrid], value.level);
   for (const [hrid, value] of Object.entries(preset.achievementBuffs)) if (value.enabled) add(data.achievements[hrid]);
@@ -34,6 +40,6 @@ export function deriveEnhancingBuffs(preset: EnhancingPreset, data: PresetGameDa
   return result;
 }
 
-export function createPreset(name = '默认预设'): EnhancingPreset { return { id: crypto.randomUUID(), name, enhancing: { playerLevel: 100, tool: {}, charm: {}, teas: [] }, specialEquipment: { hands: {}, body: {}, legs: {}, back: {}, neck: {}, earrings: {}, ring: {}, pouch: {} }, seals: [], communityBuffs: {}, achievementBuffs: {}, shrines: {} }; }
+export function createPreset(name = '默认预设'): EnhancingPreset { return { id: crypto.randomUUID(), name, enhancing: { playerLevel: 100, houseLevel: 0, tool: {}, charm: {}, teas: [] }, specialEquipment: { hands: {}, body: {}, legs: {}, back: {}, neck: {}, earrings: {}, ring: {}, pouch: {} }, seals: [], communityBuffs: {}, achievementBuffs: {}, shrines: {} }; }
 export const exportPreset = (preset: EnhancingPreset) => JSON.stringify(preset, null, 2);
 export function importPreset(json: string): EnhancingPreset { const value = JSON.parse(json) as EnhancingPreset; if (!value.id || !value.name || !value.enhancing || !value.specialEquipment) throw new Error('invalid enhancing preset'); return value; }
