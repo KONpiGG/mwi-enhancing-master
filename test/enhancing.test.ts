@@ -43,6 +43,26 @@ test('failure returns to zero below protection and falls one level at/above it',
   const { q, rates } = buildEnhancementTransitions(item, buffs, 4, 2);
   assert.equal(q[1]![0], rates[1]!.failure); assert.equal(q[2]![1], rates[2]!.failure);
 });
+test('Milkonomy reference case has identical success, attempts, cost, and profit', () => {
+  // This is the same fundamental-matrix example evaluated by the upstream
+  // EnhanceCalculator: Sword, player preset level 10, +0 -> +4, protect at +2.
+  const result = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 4, protectLevel: 2, buffs, marketFeeRate: .05, actionSeconds: 12 });
+  const expectedVisits = [12.880026152337386, 10.074098289201283, 6.265664160401014, 2.6315789473684266];
+  expectedVisits.forEach((value, level) => assert.ok(Math.abs(result.visits[level]! - value) < 1e-12));
+  assert.equal(result.steps[0]!.successRate, .5);
+  assert.ok(Math.abs(result.expectedActions - 31.851367549308108) < 1e-12);
+  assert.ok(Math.abs(result.expectedProtections - 5.2656641604010135) < 1e-12);
+  assert.ok(Math.abs(result.cashCost - 100 - result.expectedActions * 10 - result.expectedProtections * 8) < 1e-12);
+  assert.ok(Math.abs(result.expectedProfit - (650 * .95 - result.cashCost)) < 1e-12);
+});
+
+test('Milkonomy does not replace its upstream rate semantics with generic clamps', () => {
+  const { rates } = buildEnhancementTransitions(item, { ...buffs, success: 2, blessed: 1.5 }, 1, 1);
+  assert.equal(rates[0]!.success, 1.5);
+  assert.equal(rates[0]!.normalUp, -.75);
+  assert.equal(rates[0]!.leapUp, 2.25);
+  assert.equal(rates[0]!.failure, -.5);
+});
 test('blessing adds a +2 transition and overflow is absorbed', () => {
   const model = buildEnhancementTransitions(item, { ...buffs, blessed: .25 }, 3, 3);
   assert.ok(model.q[0]![2]! > 0); assert.equal(model.q[2]!.reduce((a, b) => a + b, 0), model.rates[2]!.failure);

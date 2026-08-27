@@ -17,6 +17,9 @@ export interface EnhancingBuffs { playerLevel: number; success: number; blessed:
 
 export function deriveEnhancingBuffs(preset: EnhancingPreset, data: PresetGameData): EnhancingBuffs {
   const result: EnhancingBuffs = { playerLevel: preset.enhancing.playerLevel, success: 0, blessed: 0, experience: 0, speed: 0 };
+  // Direct counterpart of Milkonomy initBuffMap. Equipment contributes its
+  // base stat plus enhancementBonus * the game's total-bonus multiplier;
+  // leveled community buffs use base + per-level * (level - 1).
   const add = (records: readonly BuffRecord[] | undefined, level = 0, equipment = false) => { for (const buff of records ?? []) {
     const multiplier = equipment ? (data.enhancementLevelTotalBonusMultiplierTable?.[level] ?? 0) : level || 1;
     const scaled = buff.levelMode === 'base-plus' ? (level > 0 ? buff.value + (buff.perEnhanceLevel ?? 0) * (level - 1) : 0) : buff.value * multiplier + (buff.perEnhanceLevel ?? 0) * level;
