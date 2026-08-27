@@ -56,6 +56,13 @@ test('Milkonomy reference case has identical success, attempts, cost, and profit
   assert.ok(Math.abs(result.expectedProfit - (650 * .95 - result.cashCost)) < 1e-12);
 });
 
+test('material cost excludes the separately purchased base item', () => {
+  const result = evaluateEnhancementStrategy({ snapshot, item, targetLevel: 4, protectLevel: 4, buffs });
+  assert.equal(result.expectedProtections, 0);
+  assert.ok(Math.abs(result.materialCost - result.expectedActions * 10) < 1e-12);
+  assert.ok(Math.abs(result.cashCost - result.baseItemCost - result.materialCost) < 1e-12);
+});
+
 test('Milkonomy does not replace its upstream rate semantics with generic clamps', () => {
   const { rates } = buildEnhancementTransitions(item, { ...buffs, success: 2, blessed: 1.5 }, 1, 1);
   assert.equal(rates[0]!.success, 1.5);
