@@ -78,6 +78,24 @@ test('self manufacture supplies missing or overpriced level-zero equipment', () 
   assert.equal(row.bestStrategy.manufactureCost, 10);
 });
 
+test('self manufacture includes Milkonomy upgradeItemHrid in the cost', () => {
+  const necklace = enhanceableItems.find(entry => entry.itemHrid === '/items/philosophers_necklace')!;
+  assert.equal(necklace.manufactureUpgradeItemHrid, '/items/philosophers_stone');
+  const componentCost = 61_890_000;
+  const stoneCost = 523_810_000;
+  const priced: MarketSnapshot = { timestamp: snapshot.timestamp, quotes: [
+    { itemHrid: necklace.itemHrid, enhancementLevel: 0, ask: 700_000_000, bid: 690_000_000, hourlyAverage: 695_000_000, hourlyVolume: 1 },
+    { itemHrid: necklace.itemHrid, enhancementLevel: 1, ask: 750_000_000, bid: 740_000_000, hourlyAverage: 745_000_000, hourlyVolume: 1 },
+    { itemHrid: '/items/philosophers_stone', enhancementLevel: 0, ask: stoneCost, bid: stoneCost, hourlyAverage: stoneCost, hourlyVolume: 1 },
+    ...necklace.manufactureMaterials!.map((material, index) => ({ itemHrid: material.itemHrid, enhancementLevel: 0, ask: index === 0 ? componentCost : 0, bid: 0, hourlyAverage: 0, hourlyVolume: 1 })),
+    ...necklace.steps[0]!.materials.map(material => ({ itemHrid: material.itemHrid, enhancementLevel: 0, ask: 0, bid: 0, hourlyAverage: 0, hourlyVolume: 1 })),
+  ] };
+  const result = evaluateEnhancementStrategy({ snapshot: priced, item: necklace, targetLevel: 1, protectLevel: 1, buffs: { ...buffs, playerLevel: 100 }, manufactureBase: true });
+  assert.equal(result.manufactureCost, 585_700_000);
+  assert.equal(result.baseItemCost, 585_700_000);
+  assert.equal(result.baseItemSource, 'manufacture');
+});
+
 test('self manufacture uses the production recipe rather than one enhancement attempt', () => {
   const bottoms = enhanceableItems.find(entry => entry.itemHrid === '/items/enhancers_bottoms')!;
   const priced: MarketSnapshot = { timestamp: snapshot.timestamp, quotes: [
