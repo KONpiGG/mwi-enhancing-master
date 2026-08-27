@@ -126,13 +126,13 @@ export function evaluateEnhancementStrategy(input: StrategyInput): EnhancementSt
   if (expectedProtections !== 0 && !protection) missing.add('protection-item:ask');
   const marketBasePrice = quotes.get(key(item.itemHrid, origin))?.ask;
   let manufactureCost = NaN;
-  if (input.manufactureBase && origin === 0) manufactureCost = item.steps[0]!.materials.reduce((sum, material) => {
+  if (input.manufactureBase && origin === 0 && item.manufactureMaterials) manufactureCost = item.manufactureMaterials.reduce((sum, material) => {
     const price = material.itemHrid === '/items/coin' ? 1 : quotes.get(key(material.itemHrid, 0))?.ask;
     return price == null ? NaN : sum + material.quantity * price;
   }, 0);
   const useManufacture = Number.isFinite(manufactureCost) && (marketBasePrice == null || marketBasePrice > manufactureCost);
   if (marketBasePrice == null && !useManufacture && input.manufactureBase && origin === 0) {
-    for (const material of item.steps[0]!.materials) if (material.itemHrid !== '/items/coin' && quotes.get(key(material.itemHrid, 0))?.ask == null) missing.add(`${material.itemHrid}@+0:ask`);
+    for (const material of item.manufactureMaterials ?? []) if (material.itemHrid !== '/items/coin' && quotes.get(key(material.itemHrid, 0))?.ask == null) missing.add(`${material.itemHrid}@+0:ask`);
   }
   const baseItemCost = useManufacture ? manufactureCost : ask(item.itemHrid, origin); let materialCost = 0; let totalExperience = 0; const materialQuantities = new Map<string, number>();
   const steps = rates.map(r => {
