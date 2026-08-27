@@ -9,7 +9,7 @@ import { rankingWorkerUrl } from './enhancing/ranking-worker-url.js';
 import { enhanceableItems } from './game-data/catalog.js';
 import { collectSnapshot } from './market/collect.js';
 import { SnapshotStore } from './market/store.js';
-import { applyFinishedItemValuation, MarketHistoryClient } from './market/history.js';
+import { applyFinishedItemValuation, finishHistoricalRanking, MarketHistoryClient } from './market/history.js';
 
 const port = Number(process.env.PORT ?? 3000);
 const store = new SnapshotStore(process.env.MWI_DATA_DIR ?? 'data');
@@ -63,19 +63,21 @@ createServer(async (request, response) => {
       const cacheKey = `${snapshot.timestamp}:${level}:${hourlyRate}:${url.searchParams}`;
       let batch = rankingCache.get(cacheKey);
       if (!batch) {
-        batch = await runRankingWorker(request, { snapshot, items: enhanceableItems, buffs: profile, now: new Date().toISOString(), marketFeeRate: feeRate, hourlyRate, actionSeconds: 12, manufactureBase });
+        batch = await runRankingWorker(request, { snapshot, items: enhanceableItems, buffs: profile, now: new Date().toISOString(), marketFeeRate: feeRate, hourlyRate, actionSeconds: 12, manufactureBase, allowMissingFinishedBid: useHistoryValuation });
         rankingCache.set(cacheKey, batch);
         if (rankingCache.size > 20) rankingCache.delete(rankingCache.keys().next().value!);
       }
+      let historyFailureCount = 0;
       if (useHistoryValuation) {
-        const valued = await Promise.all(batch.rows.map(async row => applyFinishedItemValuation(row, await historyClient.valuation(row.itemHrid, row.toLevel), feeRate)));
-        batch = { ...batch, rows: valued.filter((row): row is NonNullable<typeof row> => row !== null) };
+        const valued = await Promise.all(batch.rows.map(async row => { try { return applyFinishedItemValuation(row, await historyClient.valuation(row.itemHrid, row.toLevel), feeRate); } catch { historyFailureCount++; return row.grossSaleRevenue > 0 ? row : null; } }));
+        const rows = finishHistoricalRanking(valued.filter((row): row is NonNullable<typeof row> => row !== null));
+        batch = { ...batch, rows, successCount: rows.length, excludedMissingPriceCount: batch.candidateCount - rows.length };
       }
       return json(response, 200, { timestamp: snapshot.timestamp, feeRate, profile, presetOptions, catalogSize: enhanceableItems.length, catalogItems, quoteCount: snapshot.quotes.length,
         marketItemCount: new Set(snapshot.quotes.map(quote => quote.itemHrid)).size, marketItems,
         candidateCount: batch.candidateCount, evaluatedProjectCount: batch.successCount,
         excludedMissingPriceCount: batch.excludedMissingPriceCount, exactCalculationMs: batch.exactCalculationMs,
-        riskCalculationMs: batch.riskCalculationMs, rows: batch.rows });
+        riskCalculationMs: batch.riskCalculationMs, historyFailureCount, rows: batch.rows });
     }
     if (url.pathname === '/api/risk' && request.method === 'POST') {
       const body = await readJsonBody(request);
