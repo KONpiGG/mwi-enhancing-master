@@ -201,6 +201,7 @@ test('ranking exposes unified cost, hourly profit, experience efficiency and exa
   assert.ok(row.expectedAttempts > row.toLevel-row.fromLevel); assert.ok(row.expectedTime > 0);
   assert.ok(row.experiencePerHour! > 0); assert.ok(row.experiencePerGold! > 0); assert.ok(row.experienceEfficiency! >= 0 && row.experienceEfficiency! <= 100);
   assert.equal(row.simulationRuns, 0); assert.ok(row.lossProbability >= 0 && row.lossProbability <= 1); assert.ok(row.profitP10 <= row.profitP50 && row.profitP50 <= row.profitP90);
+  assert.equal(row.marketListingPrice, snapshot.quotes.find(quote => quote.itemHrid === row.itemHrid && quote.enhancementLevel === row.toLevel)!.bid);
   assert.equal(row.recent72hVolume, null);
 });
 test('risk simulation efficiently samples very long level-zero failure streaks', () => {
