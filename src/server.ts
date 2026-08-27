@@ -9,12 +9,14 @@ import { rankingWorkerUrl } from './enhancing/ranking-worker-url.js';
 import { enhanceableItems } from './game-data/catalog.js';
 import { collectSnapshot } from './market/collect.js';
 import { SnapshotStore } from './market/store.js';
+import { applyFinishedItemValuation, MarketHistoryClient } from './market/history.js';
 
 const port = Number(process.env.PORT ?? 3000);
 const store = new SnapshotStore(process.env.MWI_DATA_DIR ?? 'data');
 const publicDir = join(import.meta.dirname, 'web');
 const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const rankingCache = new Map<string, RankingBatch>();
+const historyClient = new MarketHistoryClient();
 
 createServer(async (request, response) => {
   try {
@@ -35,6 +37,7 @@ createServer(async (request, response) => {
       const feeRate = .05;
       const hourlyRate = Number(url.searchParams.get('hourlyRate') ?? 0);
       const manufactureBase = url.searchParams.get('manufactureBase') === 'true';
+      const useHistoryValuation = url.searchParams.get('historyValuation') === 'true';
       if (!Number.isInteger(level) || level < 0 || level > 200) return json(response, 400, { error: '强化等级必须是 0–200 的整数' });
       if (!Number.isFinite(hourlyRate) || hourlyRate < 0) return json(response, 400, { error: '每小时工时费必须是非负数' });
       const snapshot = await store.latest();
@@ -63,6 +66,10 @@ createServer(async (request, response) => {
         batch = await runRankingWorker(request, { snapshot, items: enhanceableItems, buffs: profile, now: new Date().toISOString(), marketFeeRate: feeRate, hourlyRate, actionSeconds: 12, manufactureBase });
         rankingCache.set(cacheKey, batch);
         if (rankingCache.size > 20) rankingCache.delete(rankingCache.keys().next().value!);
+      }
+      if (useHistoryValuation) {
+        const valued = await Promise.all(batch.rows.map(async row => applyFinishedItemValuation(row, await historyClient.valuation(row.itemHrid, row.toLevel), feeRate)));
+        batch = { ...batch, rows: valued.filter((row): row is NonNullable<typeof row> => row !== null) };
       }
       return json(response, 200, { timestamp: snapshot.timestamp, feeRate, profile, presetOptions, catalogSize: enhanceableItems.length, catalogItems, quoteCount: snapshot.quotes.length,
         marketItemCount: new Set(snapshot.quotes.map(quote => quote.itemHrid)).size, marketItems,
