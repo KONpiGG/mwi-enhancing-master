@@ -1,8 +1,8 @@
-import { sourceItems, successRates } from './generated-catalog.js';
+import { sourceItems, successRates } from './catalog-data.js';
 import { chineseItemNames } from './item-translations.js';
 
 export const GAME_DATA_VERSION = 'milkonomy-game-data-v1.20260309.0';
-export const FORMULA_VERSION = 'milkonomy-markov-v1-febe90f';
+export const FORMULA_VERSION = 'milkonomy-enhance-direct-port-v1';
 
 export interface EnhancementStep {
   toLevel: number;

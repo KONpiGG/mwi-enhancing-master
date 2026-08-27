@@ -24,7 +24,6 @@ export interface RankingRow {
 export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem; originLevel?: number; targetLevel: number; protectLevel: number; buffs?: EnhancingBuffs; marketFeeRate?: number; actionSeconds?: number }
 
 const key = (h: string, l = 0) => `${h}\0${l}`;
-const clamp = (n: number) => Math.max(0, Math.min(1, n));
 // Risk is secondary metadata, while expected profit/experience is solved exactly.
 // Keeping this bounded makes it possible to evaluate the entire quoted market
 // instead of spending most of the request on Monte Carlo samples.
@@ -40,16 +39,29 @@ function quoteIndex(snapshot: MarketSnapshot) {
   return index;
 }
 
-/** Fundamental-matrix solution of the Milkonomy enhancement state transitions. */
+/**
+ * Direct port of Milkonomy's EnhanceCalculator rate methods and enhancelate
+ * transition construction. Keep the seemingly asymmetric Math.min: upstream
+ * caps levelUpRate, but does not independently clamp success, blessing, leap,
+ * or failure.
+ *
+ * Source: Milkonomy-main_ref/src/calculator/enhance.ts
+ * Player-level ratio source: Milkonomy-main_ref/src/common/apis/player/index.ts
+ */
 export function buildEnhancementTransitions(item: EnhanceableItem, buffs: EnhancingBuffs, targetLevel: number, protectLevel: number) {
   if (!Number.isInteger(targetLevel) || targetLevel < 1 || targetLevel > item.steps.length) throw new RangeError('invalid target level');
   if (!Number.isInteger(protectLevel) || protectLevel < 1 || protectLevel > targetLevel) throw new RangeError('invalid protection level');
   const rates = item.steps.slice(0, targetLevel).map((step, level) => {
     const itemLevel = item.itemLevel ?? 0;
     const levelRatio = buffs.playerLevel >= itemLevel ? .0005 * (buffs.playerLevel - itemLevel) : itemLevel ? -.5 * (1 - buffs.playerLevel / itemLevel) : 0;
-    const success = clamp(step.baseSuccessRate * (1 + levelRatio + buffs.success));
-    const blessed = clamp(buffs.blessed);
-    return { level, success, normalUp: success * (1 - blessed), leapUp: success * blessed, failure: 1 - success };
+    const success = step.baseSuccessRate * (1 + levelRatio + buffs.success);
+    return {
+      level,
+      success,
+      normalUp: Math.min(1, success * (1 - buffs.blessed)),
+      leapUp: success * buffs.blessed,
+      failure: 1 - success,
+    };
   });
   const q = Array.from({ length: targetLevel }, () => Array(targetLevel).fill(0));
   for (const r of rates) {
