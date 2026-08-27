@@ -225,6 +225,14 @@ test('rankings enumerate every quoted origin and target pair', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp));
   assert.equal(rows.length, 28); assert.ok(rows.some(row => row.fromLevel === 3 && row.toLevel === 5)); assert.ok(rows.some(row => row.fromLevel === 4 && row.toLevel === 7));
 });
+test('historical ranking mode admits finished equipment without a highest bid', () => {
+  const missingFinishedBid = structuredClone(snapshot);
+  const finishedQuote = missingFinishedBid.quotes.find(q => q.itemHrid === item.itemHrid && q.enhancementLevel === 1)!; finishedQuote.bid = null; finishedQuote.ask = null;
+  assert.equal(calculateRankings(missingFinishedBid, [item], buffs, new Date(snapshot.timestamp)).some(row => row.fromLevel === 0 && row.toLevel === 1), false);
+  const row = calculateRankings(missingFinishedBid, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12, false, true).find(row => row.fromLevel === 0 && row.toLevel === 1)!;
+  assert.equal(row.marketListingPrice, null);
+  assert.ok(Number.isFinite(row.capitalRequired));
+});
 test('ranking never drops projects using a market-only shortlist', () => {
   const rows = calculateRankings(snapshot, [item], buffs, new Date(snapshot.timestamp), .05, 0, 12);
   assert.equal(rows.length, 28);

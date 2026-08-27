@@ -19,8 +19,9 @@ export interface RankingRow {
   purchaseCost: number; materialCost: number; protectionCost: number; capitalRequired: number; grossSaleRevenue: number;
   marketFee: number; saleRevenue: number; profit: number; profitRate: number; netTrainingCost: number; costPerExperience: number;
   expectedTime: number; experiencePerHour: number | null; experiencePerGold: number | null; experienceEfficiency: number | null; hourlyProfit: number | null; attemptVariance: number;
-  recent72hVolume: number | null; volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
+  recent72hVolume: number | null; historyVolume?: number; historyWindowDays?: 3 | 7; volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
   expectedPrice?: number; liquidityGrade?: 'S' | 'A' | 'B' | 'C' | 'D'; expectedSaleWaitHours?: number | null;
+  marketListingPrice: number | null;
   totalCost: number; lossProbability: number; profitP10: number; profitP50: number; profitP90: number; downsideLossRate: number; riskScore: number; riskLevel: string; simulationRuns: number;
 }
 export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem; originLevel?: number; targetLevel: number; protectLevel: number; buffs?: EnhancingBuffs; marketFeeRate?: number; actionSeconds?: number; manufactureBase?: boolean }
@@ -175,20 +176,23 @@ export function evaluateProtectionStrategies(input: Omit<StrategyInput, 'protect
 }
 
 /** Shared project set; profit and training views only sort/filter these rows differently. */
-export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12, manufactureBase = false): RankingRow[] {
+export function calculateRankings(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs | number, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12, manufactureBase = false, allowMissingFinishedBid = false): RankingRow[] {
   const resolved = typeof buffs === 'number' ? { playerLevel: buffs, success: 0, blessed: 0, experience: 0, speed: 0 } : buffs; const rows: RankingRow[] = []; const quotes = quoteIndex(snapshot);
   // A market-only shortlist is not valid here: player buffs can change which
   // project wins. Enumerate every origin/target pair that has usable quotes.
   const candidates: { item: EnhanceableItem; originLevel: number; targetLevel: number }[] = [];
   for (const item of items) for (let originLevel = 0; originLevel < item.steps.length; originLevel++) for (let targetLevel = originLevel + 1; targetLevel <= item.steps.length; targetLevel++) {
     const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel));
-    if (((!manufactureBase || originLevel !== 0) && buy?.ask == null) || sell?.bid == null) continue;
+    if (((!manufactureBase || originLevel !== 0) && buy?.ask == null) || (!allowMissingFinishedBid && sell?.bid == null)) continue;
     candidates.push({ item, originLevel, targetLevel });
   }
   for (const { item, originLevel, targetLevel } of candidates) {
     const buy = quotes.get(key(item.itemHrid, originLevel)); const sell = quotes.get(key(item.itemHrid, targetLevel))!;
-    const evaluation = evaluateProtectionStrategies({ snapshot, item, originLevel, targetLevel, buffs: resolved, marketFeeRate, actionSeconds, manufactureBase }); if (!evaluation) continue;
-    const b = evaluation.bestStrategy;
+    const evaluation = evaluateProtectionStrategies({ snapshot, item, originLevel, targetLevel, buffs: resolved, marketFeeRate, actionSeconds, manufactureBase });
+    if (!evaluation && !(allowMissingFinishedBid && sell.bid == null)) continue;
+    const resolvedEvaluation = evaluation ?? evaluateProtectionStrategiesWithPlaceholderBid(snapshot, { item, originLevel, targetLevel, buffs: resolved, marketFeeRate, actionSeconds, manufactureBase });
+    if (!resolvedEvaluation) continue;
+    const b = resolvedEvaluation.bestStrategy;
     const midpoint = buy?.ask == null ? 0 : (buy.ask + (buy.bid ?? buy.ask)) / 2; const spread = midpoint ? (buy!.ask! - (buy!.bid ?? buy!.ask!)) / midpoint : 0; const volume = buy ? Math.min(buy.hourlyVolume, sell.hourlyVolume) : sell.hourlyVolume; const risks: string[] = [];
     if (volume < 5) risks.push('低成交量'); if (spread > .2) risks.push('买卖价差较大'); if ((now.valueOf() - new Date(snapshot.timestamp).valueOf()) / 36e5 > 2) risks.push('市场数据陈旧');
     const totalCost = b.cashCost + b.marketFee;
@@ -203,15 +207,21 @@ export function calculateRankings(snapshot: MarketSnapshot, items: readonly Enha
     const lossProbability = profitDeviation > 0 ? normalCdf(-profit / profitDeviation) : profit < 0 ? 1 : 0;
     const downsideLossRate = totalCost > 0 ? Math.min(1, Math.max(0, -p10) / totalCost) : 0;
     const riskScore = 100 * (lossProbability * .6 + downsideLossRate * .4);
-    rows.push({ id: `${item.itemHrid}:${originLevel}:${targetLevel}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: originLevel, toLevel: targetLevel, bestStrategy: b, allStrategies: evaluation.allStrategies,
+    rows.push({ id: `${item.itemHrid}:${originLevel}:${targetLevel}`, itemHrid: item.itemHrid, itemName: item.name, fromLevel: originLevel, toLevel: targetLevel, bestStrategy: b, allStrategies: resolvedEvaluation.allStrategies,
       expectedAttempts: b.expectedActions, expectedProtections: b.expectedProtections, totalExperience: b.totalExperience, purchaseCost: b.baseItemCost, materialCost: b.materialCost, protectionCost: b.protectionCost,
       capitalRequired: b.cashCost, grossSaleRevenue: b.grossRevenue, marketFee: b.marketFee, saleRevenue: b.netRevenue, totalCost, profit, profitRate: totalCost > 0 ? profit/totalCost : NaN,
       expectedTime:b.expectedTime, experiencePerHour:b.expectedTime > 0 ? b.totalExperience*3600/b.expectedTime : null, experiencePerGold:totalCost > 0 ? b.totalExperience/totalCost : null, experienceEfficiency:null, hourlyProfit:b.expectedTime > 0 ? profit*3600/b.expectedTime : null, attemptVariance:b.attemptVariance,
       netTrainingCost: b.netTrainingCost, costPerExperience: b.costPerExperience, recent72hVolume:null, volume, spread, snapshotTimestamp: snapshot.timestamp, formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks,
-      lossProbability, profitP10:p10, profitP50:profit, profitP90:p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:0 });
+      marketListingPrice: sell.ask ?? null, lossProbability, profitP10:p10, profitP50:profit, profitP90:p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:0 });
   }
   applyExperienceEfficiency(rows);
   return rows;
+}
+
+function evaluateProtectionStrategiesWithPlaceholderBid(snapshot: MarketSnapshot, input: Omit<StrategyInput, 'protectLevel' | 'snapshot'>): ProtectionEvaluation | null {
+  const quotes = snapshot.quotes.map(quote => quote.itemHrid === input.item.itemHrid && quote.enhancementLevel === input.targetLevel ? { ...quote, bid: quote.bid ?? 0 } : quote);
+  if (!quotes.some(quote => quote.itemHrid === input.item.itemHrid && quote.enhancementLevel === input.targetLevel)) quotes.push({ itemHrid: input.item.itemHrid, enhancementLevel: input.targetLevel, bid: 0, ask: null, hourlyAverage: 0, hourlyVolume: 0 });
+  return evaluateProtectionStrategies({ ...input, snapshot: { ...snapshot, quotes } });
 }
 
 function normalCdf(value: number) {
@@ -248,18 +258,18 @@ export function simulateRankingRisk(row: RankingRow, runs = 1_000): Pick<Ranking
 function hash(value: string): number { let h = 2166136261; for (const c of value) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
 function random(seed: number) { let state = seed || 1; return () => { state = (state + 0x6D2B79F5) | 0; let t = Math.imul(state ^ (state >>> 15), 1 | state); t ^= t + Math.imul(t ^ (t >>> 7), 61 | t); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
-function riskLevel(score:number) { return score<=20?'很低':score<=40?'低':score<=60?'中':score<=80?'高':'很高'; }
+export function riskLevel(score:number) { return score<=20?'很低':score<=40?'低':score<=60?'中':score<=80?'高':'很高'; }
 function percentileRanks(values:number[]) { const sorted=[...values].sort((a,b)=>a-b), ranks=new Map<number,number>(); for(let start=0;start<sorted.length;) { let end=start+1; while(end<sorted.length&&sorted[end]===sorted[start])end++; ranks.set(sorted[start]!,sorted.length===1?1:((start+end-1)/2)/(sorted.length-1)); start=end; } return ranks; }
-function applyExperienceEfficiency(rows:RankingRow[]) { const time=rows.flatMap(r=>r.experiencePerHour==null?[]:[r.experiencePerHour]), gold=rows.flatMap(r=>r.experiencePerGold==null?[]:[r.experiencePerGold]), timeRanks=percentileRanks(time), goldRanks=percentileRanks(gold); for(const r of rows) if(r.experiencePerHour!=null&&r.experiencePerGold!=null) r.experienceEfficiency=100*Math.sqrt(timeRanks.get(r.experiencePerHour)!*goldRanks.get(r.experiencePerGold)!); }
+export function applyExperienceEfficiency(rows:RankingRow[]) { const time=rows.flatMap(r=>r.experiencePerHour==null?[]:[r.experiencePerHour]), gold=rows.flatMap(r=>r.experiencePerGold==null?[]:[r.experiencePerGold]), timeRanks=percentileRanks(time), goldRanks=percentileRanks(gold); for(const r of rows) { r.experienceEfficiency=null; if(r.experiencePerHour!=null&&r.experiencePerGold!=null) r.experienceEfficiency=100*Math.sqrt(timeRanks.get(r.experiencePerHour)!*goldRanks.get(r.experiencePerGold)!); } }
 
 export const rankProfitProjects = (rows: readonly RankingRow[]) => rows.filter(r => r.profit > 0).sort((a, b) => (b.hourlyProfit ?? -Infinity) - (a.hourlyProfit ?? -Infinity));
 export const rankTrainingProjects = (rows: readonly RankingRow[]) => [...rows].sort((a, b) => a.costPerExperience - b.costPerExperience);
 
 export interface RankingBatch { rows: RankingRow[]; candidateCount: number; successCount: number; excludedMissingPriceCount: number; exactCalculationMs: number; riskCalculationMs: number }
 
-export function calculateRankingBatch(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12, manufactureBase = false): RankingBatch {
+export function calculateRankingBatch(snapshot: MarketSnapshot, items: readonly EnhanceableItem[], buffs: EnhancingBuffs, now = new Date(), marketFeeRate = .05, hourlyRate = 0, actionSeconds = 12, manufactureBase = false, allowMissingFinishedBid = false): RankingBatch {
   const started = performance.now();
   const candidateCount = items.reduce((sum, item) => sum + item.steps.length * (item.steps.length + 1) / 2, 0);
-  const rows = calculateRankings(snapshot, items, buffs, now, marketFeeRate, hourlyRate, actionSeconds, manufactureBase);
+  const rows = calculateRankings(snapshot, items, buffs, now, marketFeeRate, hourlyRate, actionSeconds, manufactureBase, allowMissingFinishedBid);
   return { rows, candidateCount, successCount: rows.length, excludedMissingPriceCount: candidateCount - rows.length, exactCalculationMs: performance.now() - started, riskCalculationMs: 0 };
 }
