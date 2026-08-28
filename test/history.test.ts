@@ -58,3 +58,19 @@ test('history preserves no-trade and no-order semantics for charts', async () =>
   assert.equal((await client.valuation('/items/chart', 2)).currentAsk, 140);
   await assert.rejects(client.history('/items/chart', 2, 2), /unsupported history range/);
 });
+
+test('history rejects zero prices and abnormal order listings', async () => {
+  const client = new MarketHistoryClient(async () => new Response(JSON.stringify({ data: [
+    { t: 1, p: -5, v: 2, a: 100, b: 80 },
+    { t: 2, p: 100, v: 3, a: 102, b: 82 },
+    { t: 3, p: 101, v: 4, a: 0, b: 0 },
+    { t: 4, p: 102, v: 5, a: 10_000, b: 8_000 },
+  ] })));
+  assert.deepEqual(await client.history('/items/outlier', 0, 7), [
+    { time: 1, average: null, volume: 0, ask: 100, bid: 80 },
+    { time: 2, average: 100, volume: 3, ask: 102, bid: 82 },
+    { time: 3, average: 101, volume: 4, ask: null, bid: null },
+    { time: 4, average: 102, volume: 5, ask: null, bid: null },
+  ]);
+  assert.equal((await client.valuation('/items/outlier', 0)).currentAsk, 102);
+});
