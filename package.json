@@ -19,5 +19,8 @@
     "@types/node": "^20.17.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "echarts": "^6.1.0"
   }
 }

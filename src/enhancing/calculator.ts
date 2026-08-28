@@ -21,7 +21,7 @@ export interface RankingRow {
   expectedTime: number; experiencePerHour: number | null; experiencePerGold: number | null; experienceEfficiency: number | null; hourlyProfit: number | null; attemptVariance: number;
   recent72hVolume: number | null; historyVolume?: number; historyWindowDays?: 7; averageDailyVolume7d?: number; volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
   expectedPrice?: number; liquidityGrade?: 'S' | 'A' | 'B' | 'C' | 'D'; expectedSaleWaitHours?: number | null;
-  marketListingPrice: number | null;
+  marketListingPrice: number | null; marketSellingPrice: number | null;
   totalCost: number; lossProbability: number; profitP10: number; profitP50: number; profitP90: number; downsideLossRate: number; riskScore: number; riskLevel: string; simulationRuns: number;
 }
 export interface StrategyInput { snapshot: MarketSnapshot; item: EnhanceableItem; originLevel?: number; targetLevel: number; protectLevel: number; buffs?: EnhancingBuffs; marketFeeRate?: number; actionSeconds?: number; manufactureBase?: boolean }
@@ -215,7 +215,7 @@ export function calculateRankings(snapshot: MarketSnapshot, items: readonly Enha
       capitalRequired: b.cashCost, grossSaleRevenue: b.grossRevenue, marketFee: b.marketFee, saleRevenue: b.netRevenue, totalCost, profit, profitRate: totalCost > 0 ? profit/totalCost : NaN,
       expectedTime:b.expectedTime, experiencePerHour:b.expectedTime > 0 ? b.totalExperience*3600/b.expectedTime : null, experiencePerGold:totalCost > 0 ? b.totalExperience/totalCost : null, experienceEfficiency:null, hourlyProfit:b.expectedTime > 0 ? profit*3600/b.expectedTime : null, attemptVariance:b.attemptVariance,
       netTrainingCost: b.netTrainingCost, costPerExperience: b.costPerExperience, recent72hVolume:null, volume, spread, snapshotTimestamp: snapshot.timestamp, formulaVersion: FORMULA_VERSION, gameDataVersion: GAME_DATA_VERSION, risks,
-      marketListingPrice: sell.bid ?? null, lossProbability, profitP10:p10, profitP50:profit, profitP90:p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:0 });
+      marketListingPrice: sell.bid ?? null, marketSellingPrice: sell.ask ?? null, lossProbability, profitP10:p10, profitP50:profit, profitP90:p90, downsideLossRate, riskScore, riskLevel:riskLevel(riskScore), simulationRuns:0 });
   }
   applyExperienceEfficiency(rows);
   return rows;

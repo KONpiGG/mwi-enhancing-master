@@ -45,3 +45,16 @@ test('history limits concurrent requests', async () => {
   await Promise.all(Array.from({ length: 6 }, (_, i) => client.valuation(`/items/${i}`, 1)));
   assert.equal(maximum, 2);
 });
+
+test('history preserves no-trade and no-order semantics for charts', async () => {
+  const client = new MarketHistoryClient(async () => new Response(JSON.stringify({ data: [
+    { t: 1000, p: 0, v: 0, a: -1, b: -1 },
+    { t: 2000, p: 125, v: 3, a: 140, b: 110 },
+  ] })));
+  assert.deepEqual(await client.history('/items/chart', 2, 7), [
+    { time: 1000, average: null, volume: 0, ask: null, bid: null },
+    { time: 2000, average: 125, volume: 3, ask: 140, bid: 110 },
+  ]);
+  assert.equal((await client.valuation('/items/chart', 2)).currentAsk, 140);
+  await assert.rejects(client.history('/items/chart', 2, 2), /unsupported history range/);
+});

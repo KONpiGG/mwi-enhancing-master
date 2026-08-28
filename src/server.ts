@@ -33,6 +33,12 @@ createServer(async (request, response) => {
       const marketItems = snapshot.quotes.map(quote => ({ ...quote, itemName: names.get(quote.itemHrid) ?? quote.itemHrid.split('/').at(-1)!.replaceAll('_', ' ') }));
       return json(response, 200, { timestamp: snapshot.timestamp, marketItems });
     }
+    if (url.pathname === '/api/market/history') {
+      const itemHrid=url.searchParams.get('itemHrid')??'', level=Number(url.searchParams.get('level')), days=Number(url.searchParams.get('days')??7);
+      if (!itemHrid.startsWith('/items/') || !Number.isInteger(level) || level < 0 || level > 20) return json(response, 400, { error: '物品或强化等级无效' });
+      try { return json(response, 200, { days, points: await historyClient.history(itemHrid, level, days) }); }
+      catch (error) { return json(response, 502, { error: `行情暂时不可用：${error instanceof Error?error.message:String(error)}` }); }
+    }
     if (url.pathname === '/api/rankings') {
       const level = Number(url.searchParams.get('playerLevel') ?? 0);
       const feeRate = .05;
@@ -86,6 +92,7 @@ createServer(async (request, response) => {
       const risk = await runRankingWorker(request, { riskRow: body.row, runs: 1_000 }) as unknown as Record<string, unknown>;
       return json(response, 200, { ...risk, riskCalculationMs: performance.now() - started });
     }
+    if (url.pathname === '/echarts.min.js') { const body=await readFile(join(process.cwd(),'node_modules/echarts/dist/echarts.min.js')); response.writeHead(200,{'content-type':types['.js'],'cache-control':'public, max-age=86400'}); return response.end(body); }
     const path = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     if (!/^[\w.-]+$/.test(path)) return json(response, 404, { error: 'not found' });
     const body = await readFile(join(publicDir, path));
