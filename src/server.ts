@@ -7,6 +7,7 @@ import { presetGameData, presetOptions } from './enhancing/game-preset-data.js';
 import { createPreset, deriveEnhancingBuffs } from './enhancing/preset.js';
 import { rankingWorkerUrl } from './enhancing/ranking-worker-url.js';
 import { enhanceableItems } from './game-data/catalog.js';
+import { chineseItemNames } from './game-data/item-translations.js';
 import { collectSnapshot } from './market/collect.js';
 import { SnapshotStore } from './market/store.js';
 import { applyFinishedItemValuation, finishHistoricalRanking, MarketHistoryClient } from './market/history.js';
@@ -73,7 +74,7 @@ createServer(async (request, response) => {
         const rows = finishHistoricalRanking(valued.filter((row): row is NonNullable<typeof row> => row !== null));
         batch = { ...batch, rows, successCount: rows.length, excludedMissingPriceCount: batch.candidateCount - rows.length };
       }
-      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, profile, presetOptions, catalogSize: enhanceableItems.length, catalogItems, quoteCount: snapshot.quotes.length,
+      return json(response, 200, { timestamp: snapshot.timestamp, feeRate, profile, presetOptions, catalogSize: enhanceableItems.length, catalogItems, itemNames: chineseItemNames, quoteCount: snapshot.quotes.length,
         marketItemCount: new Set(snapshot.quotes.map(quote => quote.itemHrid)).size, marketItems,
         candidateCount: batch.candidateCount, evaluatedProjectCount: batch.successCount,
         excludedMissingPriceCount: batch.excludedMissingPriceCount, exactCalculationMs: batch.exactCalculationMs,
