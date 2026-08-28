@@ -12,3 +12,4 @@
 .liquidity-S{color:#34d399}.liquidity-A{color:#6ee7b7}.liquidity-B{color:#facc15}.liquidity-C{color:#fb923c}.liquidity-D{color:#f87171}
 @media(max-width:900px){.settings-controls{grid-template-columns:1fr 1fr}.item-filter{grid-column:1/-1}}
 @media(max-width:560px){.settings-controls{grid-template-columns:1fr}.item-filter{grid-column:auto}.inline-toggle{white-space:normal}}
+.range-filters{display:grid;gap:8px}.range-filter{display:flex;align-items:end;gap:12px}.range-filter label{min-width:145px}.add-range,.remove-range{padding:7px 11px;font-size:18px;line-height:1}.remove-range{background:#374151;color:#e5e7eb}@media(max-width:700px){.range-filter{align-items:stretch;flex-direction:column}.range-filter label{width:100%}.add-range,.remove-range{align-self:flex-end}}

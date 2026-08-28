@@ -54,3 +54,12 @@ test('every catalog field matches the vendored Milkonomy game-data export', () =
     });
   }
 });
+
+test('every enhancement and protection material has a Chinese display name', async () => {
+  const { chineseItemNames } = await import('../src/game-data/item-translations.js');
+  const materials = new Set(enhanceableItems.flatMap(item => [
+    ...item.steps.flatMap(step => step.materials.map(material => material.itemHrid)),
+    ...(item.protectionItemHrids ?? []),
+  ]));
+  assert.deepEqual([...materials].filter(hrid => !chineseItemNames[hrid]), []);
+});
