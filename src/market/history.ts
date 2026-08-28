@@ -12,15 +12,16 @@ export class MarketHistoryClient {
   }
   async history(itemHrid: string, level: number, days: number): Promise<MarketHistoryPoint[]> {
     if (![1, 3, 7, 14, 30, 90, 180, 365].includes(days)) throw new RangeError('unsupported history range');
-    return (await this.request(itemHrid, level, days)).map((point, index) => ({
+    const points = sanitizeOrders(await this.request(itemHrid, level, days));
+    return points.map((point, index) => ({
       time: point.t || index, average: point.p > 0 && point.v > 0 ? point.p : null, volume: point.p > 0 && point.v > 0 ? point.v : 0,
-      ask: point.a >= 0 ? point.a : null, bid: point.b >= 0 ? point.b : null,
+      ask: point.a > 0 ? point.a : null, bid: point.b > 0 ? point.b : null,
     }));
   }
   private async load(item: string, level: number) {
-    const points=await this.request(item, level, 7), seven = summarize(points);
+    const points=sanitizeOrders(await this.request(item, level, 7)), seven = summarize(points);
     const averageDailyVolume7d = seven.volume / 7;
-    const currentAsk=[...points].reverse().find(point=>point.a>=0)?.a;
+    const currentAsk=[...points].reverse().find(point=>point.a>0)?.a;
     return { expectedPrice: seven.price, averageDailyVolume7d, volume: seven.volume, windowDays: 7, liquidityGrade: seven.volume >= 28 ? 'S' : seven.volume >= 7 ? 'A' : seven.volume >= 1 ? 'B' : seven.volume > 0 ? 'C' : 'D', expectedSaleWaitHours: seven.volume ? 168 / seven.volume : null, ...(currentAsk==null?{}:{currentAsk}) } satisfies FinishedItemValuation;
   }
   private async request(item: string, level: number, days: number): Promise<Point[]> {
@@ -37,6 +38,19 @@ export class MarketHistoryClient {
   }
 }
 function parse(payload: unknown): Point[] { const values = Array.isArray(payload) ? payload : payload && typeof payload === 'object' ? Object.values(payload as Record<string, unknown>).find(Array.isArray) : null; if (!Array.isArray(values)) throw new Error('Mooket II history payload has no data array'); return values.flatMap((x, index) => { if (!x || typeof x !== 'object') return []; const raw=x as Record<string, unknown>,p=Number(raw.p),v=Number(raw.v),a=Number(raw.a),b=Number(raw.b),t=raw.t??raw.time??raw.timestamp??raw.date??index; return Number.isFinite(p)&&Number.isFinite(v)?[{ p, v, a:Number.isFinite(a)?a:-1, b:Number.isFinite(b)?b:-1, t:typeof t==='string'||typeof t==='number'?t:index }]:[]; }); }
+function sanitizeOrders(points: Point[]): Point[] {
+  const bounds = (field: 'a' | 'b') => {
+    const values = points.map(point => point[field]).filter(value => value > 0).sort((a, b) => a - b);
+    if (values.length < 3) return null;
+    const middle = Math.floor(values.length / 2), median = values.length % 2 ? values[middle]! : (values[middle - 1]! + values[middle]!) / 2;
+    return [median * .65, median * 1.35] as const;
+  };
+  const askBounds = bounds('a'), bidBounds = bounds('b');
+  return points.map(point => ({ ...point,
+    a: point.a > 0 && (!askBounds || point.a >= askBounds[0] && point.a <= askBounds[1]) ? point.a : -1,
+    b: point.b > 0 && (!bidBounds || point.b >= bidBounds[0] && point.b <= bidBounds[1]) ? point.b : -1,
+  }));
+}
 function summarize(points: Point[]) {
   points = points.filter(point => point.p > 0 && point.v > 0);
   if (!points.length) return { volume: 0, price: null };
