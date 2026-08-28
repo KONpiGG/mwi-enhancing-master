@@ -1,20 +1,33 @@
 import { applyExperienceEfficiency, riskLevel, type RankingRow } from '../enhancing/calculator.js';
 export type LiquidityGrade = 'S' | 'A' | 'B' | 'C' | 'D';
-export interface FinishedItemValuation { expectedPrice: number | null; averageDailyVolume7d: number; volume: number; windowDays: 7; liquidityGrade: LiquidityGrade; expectedSaleWaitHours: number | null }
-interface Point { p: number; v: number }
+export interface FinishedItemValuation { expectedPrice: number | null; averageDailyVolume7d: number; volume: number; windowDays: 7; liquidityGrade: LiquidityGrade; expectedSaleWaitHours: number | null; currentAsk?: number }
+export interface MarketHistoryPoint { time: string | number; average: number | null; volume: number; ask: number | null; bid: number | null }
+interface Point { p: number; v: number; a: number; b: number; t: string | number }
 export class MarketHistoryClient {
-  private cache = new Map<string, { expires: number; value: Promise<FinishedItemValuation> }>(); private active = 0; private waiting: Array<() => void> = [];
+  private cache = new Map<string, { expires: number; value: Promise<FinishedItemValuation> }>(); private seriesCache = new Map<string, { expires: number; value: Promise<Point[]> }>(); private active = 0; private waiting: Array<() => void> = [];
   constructor(private fetcher: typeof fetch = fetch, private concurrency = 6, private cacheMs = 3_600_000, private now = Date.now, private timeoutMs = 8_000, private maxAttempts = 2) { if (concurrency < 1) throw new RangeError('history concurrency must be positive'); }
   valuation(itemHrid: string, level: number): Promise<FinishedItemValuation> {
     const key = `${itemHrid}\0${level}`, old = this.cache.get(key); if (old && old.expires > this.now()) return old.value;
     const value = this.load(itemHrid, level).catch(error => { this.cache.delete(key); throw error; }); this.cache.set(key, { expires: this.now() + this.cacheMs, value }); return value;
   }
+  async history(itemHrid: string, level: number, days: number): Promise<MarketHistoryPoint[]> {
+    if (![1, 3, 7, 14, 30, 90, 180, 365].includes(days)) throw new RangeError('unsupported history range');
+    return (await this.request(itemHrid, level, days)).map((point, index) => ({
+      time: point.t || index, average: point.p > 0 && point.v > 0 ? point.p : null, volume: point.p > 0 && point.v > 0 ? point.v : 0,
+      ask: point.a >= 0 ? point.a : null, bid: point.b >= 0 ? point.b : null,
+    }));
+  }
   private async load(item: string, level: number) {
-    const seven = summarize(await this.request(item, level, 7));
+    const points=await this.request(item, level, 7), seven = summarize(points);
     const averageDailyVolume7d = seven.volume / 7;
-    return { expectedPrice: seven.price, averageDailyVolume7d, volume: seven.volume, windowDays: 7, liquidityGrade: seven.volume >= 28 ? 'S' : seven.volume >= 7 ? 'A' : seven.volume >= 1 ? 'B' : seven.volume > 0 ? 'C' : 'D', expectedSaleWaitHours: seven.volume ? 168 / seven.volume : null } satisfies FinishedItemValuation;
+    const currentAsk=[...points].reverse().find(point=>point.a>=0)?.a;
+    return { expectedPrice: seven.price, averageDailyVolume7d, volume: seven.volume, windowDays: 7, liquidityGrade: seven.volume >= 28 ? 'S' : seven.volume >= 7 ? 'A' : seven.volume >= 1 ? 'B' : seven.volume > 0 ? 'C' : 'D', expectedSaleWaitHours: seven.volume ? 168 / seven.volume : null, ...(currentAsk==null?{}:{currentAsk}) } satisfies FinishedItemValuation;
   }
   private async request(item: string, level: number, days: number): Promise<Point[]> {
+    const key=`${item}\0${level}\0${days}`,old=this.seriesCache.get(key);if(old&&old.expires>this.now())return old.value;
+    const value=this.requestUncached(item,level,days).catch(error=>{this.seriesCache.delete(key);throw error;});this.seriesCache.set(key,{expires:this.now()+this.cacheMs,value});return value;
+  }
+  private async requestUncached(item: string, level: number, days: number): Promise<Point[]> {
     if (this.active >= this.concurrency) await new Promise<void>(resolve => this.waiting.push(resolve)); this.active++;
     try { const url = new URL('https://q7.nainai.eu.org/api/market/history'); url.searchParams.set('item_id', item); url.searchParams.set('variant', String(level)); url.searchParams.set('days', String(days)); let error: unknown;
       for (let attempt = 1; attempt <= this.maxAttempts; attempt++) try { const response = await this.fetcher(url, { signal: AbortSignal.timeout(this.timeoutMs) }); if (!response.ok) throw new Error(`Mooket II history HTTP ${response.status}`); return parse(await response.json()); } catch (caught) { error = caught; }
@@ -23,8 +36,9 @@ export class MarketHistoryClient {
     finally { this.active--; this.waiting.shift()?.(); }
   }
 }
-function parse(payload: unknown): Point[] { const values = Array.isArray(payload) ? payload : payload && typeof payload === 'object' ? Object.values(payload as Record<string, unknown>).find(Array.isArray) : null; if (!Array.isArray(values)) throw new Error('Mooket II history payload has no data array'); return values.flatMap(x => { if (!x || typeof x !== 'object') return []; const p = Number((x as Point).p), v = Number((x as Point).v); return Number.isFinite(p) && p > 0 && Number.isFinite(v) && v > 0 ? [{ p, v }] : []; }); }
+function parse(payload: unknown): Point[] { const values = Array.isArray(payload) ? payload : payload && typeof payload === 'object' ? Object.values(payload as Record<string, unknown>).find(Array.isArray) : null; if (!Array.isArray(values)) throw new Error('Mooket II history payload has no data array'); return values.flatMap((x, index) => { if (!x || typeof x !== 'object') return []; const raw=x as Record<string, unknown>,p=Number(raw.p),v=Number(raw.v),a=Number(raw.a),b=Number(raw.b),t=raw.t??raw.time??raw.timestamp??raw.date??index; return Number.isFinite(p)&&Number.isFinite(v)?[{ p, v, a:Number.isFinite(a)?a:-1, b:Number.isFinite(b)?b:-1, t:typeof t==='string'||typeof t==='number'?t:index }]:[]; }); }
 function summarize(points: Point[]) {
+  points = points.filter(point => point.p > 0 && point.v > 0);
   if (!points.length) return { volume: 0, price: null };
   const prices = points.map(point => point.p).sort((a, b) => a - b), middle = Math.floor(prices.length / 2);
   const median = prices.length % 2 ? prices[middle]! : (prices[middle - 1]! + prices[middle]!) / 2;
@@ -41,7 +55,7 @@ export function applyFinishedItemValuation(row: RankingRow, valuation: FinishedI
   r.grossSaleRevenue = price; r.marketFee = price * feeRate; r.saleRevenue = price * (1 - feeRate); r.totalCost = r.capitalRequired + r.marketFee; r.profit = r.saleRevenue - r.capitalRequired; r.profitRate = r.totalCost ? r.profit / r.totalCost : NaN; r.hourlyProfit = r.expectedTime ? r.profit * 3600 / r.expectedTime : null; r.netTrainingCost = r.capitalRequired - r.saleRevenue; r.costPerExperience = r.netTrainingCost / r.totalExperience; r.experiencePerGold = r.totalCost > 0 ? r.totalExperience / r.totalCost : null;
   const coefficient = r.expectedAttempts > 0 ? Math.sqrt(r.attemptVariance) / r.expectedAttempts : 0, deviation = (r.materialCost + r.protectionCost) * coefficient;
   r.profitP10 = r.profit - 1.281551565545 * deviation; r.profitP50 = r.profit; r.profitP90 = r.profit + 1.281551565545 * deviation; r.lossProbability = deviation > 0 ? normalCdf(-r.profit / deviation) : r.profit < 0 ? 1 : 0; r.downsideLossRate = r.totalCost > 0 ? Math.min(1, Math.max(0, -r.profitP10) / r.totalCost) : 0; r.riskScore = 100 * (r.lossProbability * .6 + r.downsideLossRate * .4); r.riskLevel = riskLevel(r.riskScore); r.simulationRuns = 0;
-  r.recent72hVolume = null; r.historyVolume = valuation.volume; r.historyWindowDays = valuation.windowDays; r.averageDailyVolume7d = valuation.averageDailyVolume7d; r.expectedPrice = price; r.liquidityGrade = valuation.liquidityGrade; r.expectedSaleWaitHours = valuation.expectedSaleWaitHours; return r;
+  r.recent72hVolume = null; r.historyVolume = valuation.volume; r.historyWindowDays = valuation.windowDays; r.averageDailyVolume7d = valuation.averageDailyVolume7d; r.expectedPrice = price; r.liquidityGrade = valuation.liquidityGrade; r.expectedSaleWaitHours = valuation.expectedSaleWaitHours; if (valuation.currentAsk != null) r.marketSellingPrice=valuation.currentAsk; return r;
 }
 
 export function finishHistoricalRanking(rows: RankingRow[]): RankingRow[] { applyExperienceEfficiency(rows); return rows; }
