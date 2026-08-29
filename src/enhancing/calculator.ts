@@ -19,7 +19,7 @@ export interface RankingRow {
   purchaseCost: number; materialCost: number; protectionCost: number; capitalRequired: number; grossSaleRevenue: number;
   marketFee: number; saleRevenue: number; profit: number; profitRate: number; netTrainingCost: number; costPerExperience: number;
   expectedTime: number; experiencePerHour: number | null; experiencePerGold: number | null; experienceEfficiency: number | null; hourlyProfit: number | null; attemptVariance: number;
-  recent72hVolume: number | null; historyVolume?: number; historyWindowDays?: 7; averageDailyVolume7d?: number; volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
+  recent72hVolume: number | null; historyVolume?: number; activeBuyVolume7d?: number; activeSellVolume7d?: number; historyWindowDays?: 7; averageDailyVolume7d?: number; volume: number; spread: number; snapshotTimestamp: string; formulaVersion: string; gameDataVersion: string; risks: string[];
   expectedPrice?: number; liquidityGrade?: 'S' | 'A' | 'B' | 'C' | 'D'; expectedSaleWaitHours?: number | null;
   marketListingPrice: number | null; marketSellingPrice: number | null;
   totalCost: number; lossProbability: number; profitP10: number; profitP50: number; profitP90: number; downsideLossRate: number; riskScore: number; riskLevel: string; simulationRuns: number;
