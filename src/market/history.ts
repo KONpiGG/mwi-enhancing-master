@@ -48,11 +48,17 @@ export function estimateActiveVolumes(points: Point[], tolerance = .02): Array<{
   return points.map(point => {
     if (!(point.p > 0 && point.v > 0)) return { activeBuyVolume: 0, activeSellVolume: 0 };
     const {ask,bid}=references.get(day(point.t))!;
-    if (!(ask != null && bid != null && ask > bid)) return { activeBuyVolume: point.v / 2, activeSellVolume: point.v / 2 };
-    const sellEdge=bid*(1+tolerance), buyEdge=ask*(1-tolerance);
-    const proportional=Math.max(0,Math.min(1,(point.p-bid)/(ask-bid)));
-    const ratio=buyEdge<=sellEdge ? (point.p >= (ask+bid)/2 ? 1 : 0) : point.p<=sellEdge?0:point.p>=buyEdge?1:proportional;
-    return { activeBuyVolume: point.v*ratio, activeSellVolume: point.v*(1-ratio) };
+    const nearAsk=ask != null && Math.abs(point.p-ask)/ask<=tolerance, nearBid=bid != null && Math.abs(point.p-bid)/bid<=tolerance;
+    // A trade close to a day's representative listing is evidence that the whole
+    // reported volume crossed that side.  Do this before interpolation: intraday
+    // listing movement must not turn an obvious ask-side trade into half a trade.
+    if (nearAsk !== nearBid) return nearAsk ? { activeBuyVolume: point.v, activeSellVolume: 0 } : { activeBuyVolume: 0, activeSellVolume: point.v };
+    // Without both sides, a price outside the known side's tolerance band does
+    // not contain enough information to guess who crossed the spread.
+    if (ask == null || bid == null) return { activeBuyVolume: 0, activeSellVolume: 0 };
+    const ratio=ask>bid?Math.max(0,Math.min(1,(point.p-bid)/(ask-bid))):Math.abs(point.p-ask)<=Math.abs(point.p-bid)?1:0;
+    const activeBuyVolume=Math.round(point.v*ratio);
+    return { activeBuyVolume, activeSellVolume: point.v-activeBuyVolume };
   });
 }
 function parse(payload: unknown): Point[] { const values = Array.isArray(payload) ? payload : payload && typeof payload === 'object' ? Object.values(payload as Record<string, unknown>).find(Array.isArray) : null; if (!Array.isArray(values)) throw new Error('Mooket II history payload has no data array'); return values.flatMap((x, index) => { if (!x || typeof x !== 'object') return []; const raw=x as Record<string, unknown>,p=Number(raw.p),v=Number(raw.v),a=Number(raw.a),b=Number(raw.b),t=raw.t??raw.time??raw.timestamp??raw.date??index; return Number.isFinite(p)&&Number.isFinite(v)?[{ p, v, a:Number.isFinite(a)?a:-1, b:Number.isFinite(b)?b:-1, t:typeof t==='string'||typeof t==='number'?t:index }]:[]; }); }
@@ -76,7 +82,7 @@ function summarize(points: Point[]) {
   const median = prices.length % 2 ? prices[middle]! : (prices[middle - 1]! + prices[middle]!) / 2;
   const retained = points.filter(point => Math.abs(point.p - median) / median <= .35);
   const volume = retained.reduce((sum, point) => sum + point.v, 0);
-  return { volume, price: retained.reduce((sum, point) => sum + point.p * point.v, 0) / volume };
+  return { volume, price: Math.round(retained.reduce((sum, point) => sum + point.p * point.v, 0) / volume) };
 }
 export function applyFinishedItemValuation(row: RankingRow, valuation: FinishedItemValuation, feeRate: number): RankingRow | null {
   if (valuation.liquidityGrade === 'D' || valuation.expectedPrice == null) return null; const r = structuredClone(row), price = valuation.expectedPrice;
