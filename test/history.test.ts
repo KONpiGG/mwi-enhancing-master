@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { estimateActiveVolumes, MarketHistoryClient } from '../src/market/history.js';
 
-test('active-side estimates use daily median quotes, proportional splitting, and adjustable tolerance', () => {
+test('active-side estimates use daily median quotes, tolerance bands, and whole-item proportional fallback', () => {
   const points = [
     { t: '2026-08-28T01:00:00Z', p: 100, v: 4, a: 120, b: 80 },
     { t: '2026-08-28T12:00:00Z', p: 116, v: 3, a: 120, b: 80 },
@@ -13,6 +13,14 @@ test('active-side estimates use daily median quotes, proportional splitting, and
     { activeBuyVolume: 3, activeSellVolume: 0 },
     { activeBuyVolume: 0, activeSellVolume: 2 },
   ]);
+});
+
+test('a traded average near the ask attributes all volume to direct buying despite listing movement', () => {
+  const points = [
+    { t: '2026-08-25T04:06:00Z', p: 98_200_000, v: 3, a: 98_400_000, b: 89_000_000 },
+    { t: '2026-08-25T12:06:00Z', p: 0, v: 0, a: 98_200_000, b: 89_000_000 },
+  ];
+  assert.deepEqual(estimateActiveVolumes(points, .02)[0], { activeBuyVolume: 3, activeSellVolume: 0 });
 });
 
 test('history uses one seven-day request, filters outliers, weights by volume, and caches requests', async () => {
@@ -28,7 +36,7 @@ test('history uses one seven-day request, filters outliers, weights by volume, a
   };
   const client = new MarketHistoryClient(fetcher, 2);
   const [a, b] = await Promise.all([client.valuation('/items/test', 7), client.valuation('/items/test', 7)]);
-  assert.deepEqual(a, { expectedPrice: 310 / 3, averageDailyVolume7d: 6 / 7, volume: 6, activeBuyVolume7d: 53, activeSellVolume7d: 53, windowDays: 7, liquidityGrade: 'B', expectedSaleWaitHours: 28 });
+  assert.deepEqual(a, { expectedPrice: 103, averageDailyVolume7d: 6 / 7, volume: 6, activeBuyVolume7d: 0, activeSellVolume7d: 0, windowDays: 7, liquidityGrade: 'B', expectedSaleWaitHours: 28 });
   assert.deepEqual(b, a);
   assert.equal(calls, 1);
 });
@@ -66,7 +74,7 @@ test('history preserves no-trade and no-order semantics for charts', async () =>
   ] })));
   assert.deepEqual(await client.history('/items/chart', 2, 7), [
     { time: 1000, average: null, volume: 0, ask: null, bid: null, activeBuyVolume: 0, activeSellVolume: 0 },
-    { time: 2000, average: 125, volume: 3, ask: 140, bid: 110, activeBuyVolume: 1.5, activeSellVolume: 1.5 },
+    { time: 2000, average: 125, volume: 3, ask: 140, bid: 110, activeBuyVolume: 2, activeSellVolume: 1 },
   ]);
   assert.equal((await client.valuation('/items/chart', 2)).currentAsk, 140);
   await assert.rejects(client.history('/items/chart', 2, 2), /unsupported history range/);
