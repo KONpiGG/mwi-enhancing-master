@@ -68,6 +68,17 @@ test('valuation side volumes use the same outlier-filtered trades as total volum
   assert.equal(valuation.activeBuyVolume7d + valuation.activeSellVolume7d, valuation.volume);
 });
 
+test('valuation derives one side from total volume so aggregate counts are conserved exactly', async () => {
+  const client = new MarketHistoryClient(async () => new Response(JSON.stringify({ data: [
+    { t: '2026-08-25T01:00:00Z', p: 100, v: .1, a: 120, b: 80 },
+    { t: '2026-08-25T02:00:00Z', p: 110, v: .2, a: 120, b: 80 },
+    { t: '2026-08-25T03:00:00Z', p: 90, v: .3, a: 120, b: 80 },
+  ] })));
+  const valuation = await client.valuation('/items/conserved', 0);
+  assert.equal(valuation.activeSellVolume7d, valuation.volume - valuation.activeBuyVolume7d);
+  assert.equal(valuation.activeBuyVolume7d + valuation.activeSellVolume7d, valuation.volume);
+});
+
 test('history computes the median for an even number of prices and retains the 35% boundary', async () => {
   const client = new MarketHistoryClient(async () => new Response(JSON.stringify({ data: [
     { p: 65, v: 1 }, { p: 100, v: 1 }, { p: 100, v: 1 }, { p: 135, v: 1 },

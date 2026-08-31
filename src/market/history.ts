@@ -26,7 +26,12 @@ export class MarketHistoryClient {
     // buckets.  Otherwise an outlier excluded from `volume` could still be
     // counted as an active buy/sell and the displayed counts would disagree.
     const averageDailyVolume7d = seven.volume / 7, active = estimateActiveVolumes(seven.points, this.priceTolerance);
-    const activeBuyVolume7d = active.reduce((sum, point) => sum + point.activeBuyVolume, 0), activeSellVolume7d = active.reduce((sum, point) => sum + point.activeSellVolume, 0);
+    // Keep one side as the remainder of the authoritative traded volume.  Do
+    // not independently aggregate both estimates: conservation of volume is a
+    // required invariant, not a best-effort consequence of the classifier.
+    const estimatedActiveBuys = active.reduce((sum, point) => sum + point.activeBuyVolume, 0);
+    const activeBuyVolume7d = Math.min(seven.volume, Math.max(0, estimatedActiveBuys));
+    const activeSellVolume7d = seven.volume - activeBuyVolume7d;
     const currentAsk=[...points].reverse().find(point=>point.a>0)?.a;
     return { expectedPrice: seven.price, averageDailyVolume7d, volume: seven.volume, activeBuyVolume7d, activeSellVolume7d, windowDays: 7, liquidityGrade: seven.volume >= 28 ? 'S' : seven.volume >= 7 ? 'A' : seven.volume >= 1 ? 'B' : seven.volume > 0 ? 'C' : 'D', expectedSaleWaitHours: seven.volume ? 168 / seven.volume : null, ...(currentAsk==null?{}:{currentAsk}) } satisfies FinishedItemValuation;
   }
