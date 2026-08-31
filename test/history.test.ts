@@ -23,6 +23,21 @@ test('a traded average near the ask attributes all volume to direct buying despi
   assert.deepEqual(estimateActiveVolumes(points, .02)[0], { activeBuyVolume: 3, activeSellVolume: 0 });
 });
 
+test('active-side estimates partition every traded item even when quote sides are missing', () => {
+  const points = [
+    { t: '2026-08-25', p: 90, v: 5, a: 100, b: -1 },
+    { t: '2026-08-26', p: 110, v: 3, a: -1, b: 100 },
+    { t: '2026-08-27', p: 100, v: 7, a: -1, b: -1 },
+  ];
+  const estimates = estimateActiveVolumes(points, .02);
+  assert.deepEqual(estimates, [
+    { activeBuyVolume: 0, activeSellVolume: 5 },
+    { activeBuyVolume: 3, activeSellVolume: 0 },
+    { activeBuyVolume: 4, activeSellVolume: 3 },
+  ]);
+  points.forEach((point, index) => assert.equal(estimates[index]!.activeBuyVolume + estimates[index]!.activeSellVolume, point.v));
+});
+
 test('history uses one seven-day request, filters outliers, weights by volume, and caches requests', async () => {
   let calls = 0;
   const fetcher: typeof fetch = async url => {
@@ -36,9 +51,21 @@ test('history uses one seven-day request, filters outliers, weights by volume, a
   };
   const client = new MarketHistoryClient(fetcher, 2);
   const [a, b] = await Promise.all([client.valuation('/items/test', 7), client.valuation('/items/test', 7)]);
-  assert.deepEqual(a, { expectedPrice: 103, averageDailyVolume7d: 6 / 7, volume: 6, activeBuyVolume7d: 0, activeSellVolume7d: 0, windowDays: 7, liquidityGrade: 'B', expectedSaleWaitHours: 28 });
+  assert.deepEqual(a, { expectedPrice: 103, averageDailyVolume7d: 6 / 7, volume: 6, activeBuyVolume7d: 4, activeSellVolume7d: 2, windowDays: 7, liquidityGrade: 'B', expectedSaleWaitHours: 28 });
   assert.deepEqual(b, a);
   assert.equal(calls, 1);
+});
+
+test('valuation side volumes use the same outlier-filtered trades as total volume', async () => {
+  const client = new MarketHistoryClient(async () => new Response(JSON.stringify({ data: [
+    { t: 1, p: 90, v: 1, a: 91, b: 80 },
+    { t: 2, p: 100, v: 2, a: 101, b: 90 },
+    { t: 3, p: 110, v: 3, a: 111, b: 100 },
+    { t: 4, p: 200, v: 100, a: 201, b: 190 },
+  ] })));
+  const valuation = await client.valuation('/items/partitioned', 1);
+  assert.equal(valuation.volume, 6);
+  assert.equal(valuation.activeBuyVolume7d + valuation.activeSellVolume7d, valuation.volume);
 });
 
 test('history computes the median for an even number of prices and retains the 35% boundary', async () => {

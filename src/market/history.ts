@@ -22,7 +22,10 @@ export class MarketHistoryClient {
   }
   private async load(item: string, level: number) {
     const points=sanitizeOrders(await this.request(item, level, 7)), seven = summarize(points);
-    const averageDailyVolume7d = seven.volume / 7, active = estimateActiveVolumes(points, this.priceTolerance);
+    // Use the same retained trades for the total and its two aggressor-side
+    // buckets.  Otherwise an outlier excluded from `volume` could still be
+    // counted as an active buy/sell and the displayed counts would disagree.
+    const averageDailyVolume7d = seven.volume / 7, active = estimateActiveVolumes(seven.points, this.priceTolerance);
     const activeBuyVolume7d = active.reduce((sum, point) => sum + point.activeBuyVolume, 0), activeSellVolume7d = active.reduce((sum, point) => sum + point.activeSellVolume, 0);
     const currentAsk=[...points].reverse().find(point=>point.a>0)?.a;
     return { expectedPrice: seven.price, averageDailyVolume7d, volume: seven.volume, activeBuyVolume7d, activeSellVolume7d, windowDays: 7, liquidityGrade: seven.volume >= 28 ? 'S' : seven.volume >= 7 ? 'A' : seven.volume >= 1 ? 'B' : seven.volume > 0 ? 'C' : 'D', expectedSaleWaitHours: seven.volume ? 168 / seven.volume : null, ...(currentAsk==null?{}:{currentAsk}) } satisfies FinishedItemValuation;
@@ -53,9 +56,15 @@ export function estimateActiveVolumes(points: Point[], tolerance = .02): Array<{
     // reported volume crossed that side.  Do this before interpolation: intraday
     // listing movement must not turn an obvious ask-side trade into half a trade.
     if (nearAsk !== nearBid) return nearAsk ? { activeBuyVolume: point.v, activeSellVolume: 0 } : { activeBuyVolume: 0, activeSellVolume: point.v };
-    // Without both sides, a price outside the known side's tolerance band does
-    // not contain enough information to guess who crossed the spread.
-    if (ask == null || bid == null) return { activeBuyVolume: 0, activeSellVolume: 0 };
+    // Every traded item must belong to exactly one of the two aggressor-side
+    // buckets.  With only one quote, prices on/through the ask are active buys
+    // and prices on/through the bid are active sells; a price away from that
+    // known edge is assigned to the opposite side.  If neither edge survived
+    // sanitization, split the indivisible quantity deterministically instead
+    // of silently dropping it.
+    if (ask == null && bid == null) { const activeBuyVolume=Math.round(point.v/2); return { activeBuyVolume, activeSellVolume: point.v-activeBuyVolume }; }
+    if (bid == null) return point.p >= ask! * (1-tolerance) ? { activeBuyVolume: point.v, activeSellVolume: 0 } : { activeBuyVolume: 0, activeSellVolume: point.v };
+    if (ask == null) return point.p <= bid * (1+tolerance) ? { activeBuyVolume: 0, activeSellVolume: point.v } : { activeBuyVolume: point.v, activeSellVolume: 0 };
     const ratio=ask>bid?Math.max(0,Math.min(1,(point.p-bid)/(ask-bid))):Math.abs(point.p-ask)<=Math.abs(point.p-bid)?1:0;
     const activeBuyVolume=Math.round(point.v*ratio);
     return { activeBuyVolume, activeSellVolume: point.v-activeBuyVolume };
@@ -77,12 +86,12 @@ function sanitizeOrders(points: Point[]): Point[] {
 }
 function summarize(points: Point[]) {
   points = points.filter(point => point.p > 0 && point.v > 0);
-  if (!points.length) return { volume: 0, price: null };
+  if (!points.length) return { volume: 0, price: null, points };
   const prices = points.map(point => point.p).sort((a, b) => a - b), middle = Math.floor(prices.length / 2);
   const median = prices.length % 2 ? prices[middle]! : (prices[middle - 1]! + prices[middle]!) / 2;
   const retained = points.filter(point => Math.abs(point.p - median) / median <= .35);
   const volume = retained.reduce((sum, point) => sum + point.v, 0);
-  return { volume, price: Math.round(retained.reduce((sum, point) => sum + point.p * point.v, 0) / volume) };
+  return { volume, price: Math.round(retained.reduce((sum, point) => sum + point.p * point.v, 0) / volume), points: retained };
 }
 export function applyFinishedItemValuation(row: RankingRow, valuation: FinishedItemValuation, feeRate: number): RankingRow | null {
   if (valuation.liquidityGrade === 'D' || valuation.expectedPrice == null) return null; const r = structuredClone(row), price = valuation.expectedPrice;
